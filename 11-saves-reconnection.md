@@ -1,16 +1,28 @@
 # Saves and reconnection
 
-Tracing a continued run leads through two kinds of retained state: the in-session records used to restore a returning scout, and a disk snapshot assembled at a campfire. They share player-state machinery but have different lifetimes. The defects are concentrated at that boundary: the snapshot refresh can stop early, preparing saved status values mutates retained data, and loading does not consistently terminate after reporting failure.
-
-## What it does
+A reconnect record and a campfire save share player-state machinery. They do not share a lifetime. One is still part of a running session; the other is supposed to be a snapshot. The distinction is easy enough to describe, and rather less carefully maintained when the save code starts editing the data.
 
 A returning scout needs more than a spawn position. Inventory, conditions, death state, and the scout report must agree with the ongoing run. Continuing a saved run also needs the selected island, ascent, camp progress, world time, and retained item state. `ReconnectHandler` maintains participant records during play, while `Peak.Quicksave` packages run progress and player records for later use. Session appearance data travels through `PersistentPlayerDataService`; its name does not mean that service writes a disk save.
 
-## How it's built
+## Reconnect records
 
 `ReconnectHandler` creates dictionaries for player state and achievement progress and registers for room callbacks. Its `Update` waits for a room and local character, then finds players ready for registration. `RegisterPlayer` creates an initial `ReconnectData` record when necessary and subscribes to character-state, affliction, warp, and inventory changes. Those events refresh records in addition to the periodic refresh in `Update`.
 
 `ReconnectData.CreateFromCharacter` gathers the character's current state. It allocates a new status array, copies the eligible conditions, and captures inventory, equipment selection, map progress, and scout-report data. It rejects snapshots taken before initialization or during particular unstable movement and position states. `ReconnectHandler.UpdateReconnectData` replaces the retained record only when the new data is valid. A rejected transient sample therefore leaves the earlier valid record available.
+
+Reusing reconnect data for checkpoint player state avoids a second, independently maintained description of inventory and character conditions. Retaining the last valid sample when a new one is transiently unsuitable is also a deliberate recovery policy.
+
+Refreshing everyone stops being a group operation at the first missing registration.
+
+`ReconnectHandler.UpdateForAllCharacters` iterates the current players. When it encounters an actor not present in `_observedActors`, it tries to register that actor if ready, otherwise logs the failure. It then breaks out of the loop in either case. Players later in the enumeration are not refreshed.
+
+The caller makes this a persistence defect rather than merely an inaccurate method name. `Quicksave.SaveNow` immediately follows that refresh with `SaveData.Create`. Later players can consequently contribute older records, while an actor that is still absent from the retained dictionary is not included in the dictionary enumeration at all. `SaveData.Create` logs invalid records and proceeds with the remaining ones; it does not turn an incomplete refresh into a failed checkpoint.
+
+A partially initialized player is a reason to defer or reject that player's snapshot. It is not a reason to skip refreshing unrelated, already registered players. Continuing the loop would at least isolate the missing registration. A stronger design would return a refresh result describing whether every required participant has a valid record, leaving `SaveNow` to decide whether to retain the previous checkpoint or commit the new one.
+
+Instead, a single missing registration changes the freshness of records that follow it. Enumeration order becomes part of save quality.
+
+## Restoring a character
 
 Reconnection and checkpoint loading converge on character restoration:
 
@@ -21,35 +33,13 @@ Reconnection and checkpoint loading converge on character restoration:
 
 The affliction chapter covers the difference between state restoration and ordinary status modification. This chapter follows the records feeding that restoration rather than repeating that issue.
 
+## Writing the checkpoint
+
 For disk saves, `Campfire.Light_Rpc` advances the segment when appropriate, calls `Quicksave.SaveNow`, and then invokes the quicksave UI feedback. `SaveNow` asks the reconnect handler to refresh all characters, constructs `SaveData`, serializes it, and writes the save file. `SaveData.Create` enumerates retained player IDs and excludes records that cannot supply valid reconnect data and achievement progress.
-
-`RunProgress.Create` records the active scene and run progress. Its construction also collects tracked item-spawn history, opened base-camp luggage, and loose items near the campfire. This is selected world persistence rather than a serialization of every live object. `RunManager` uses compatible spawn history during setup and restores saved base-camp items. `Quicksave.FinalizeRunSetup` restores the run clock and day/night values, then clears the temporary loaded-data state.
-
-Loading begins in `MainMenuMainPage.SetUpContinueButton`. It passes a callback to `Quicksave.TryLoadSave` and combines the result with `Quicksave.Exists` before enabling the continue button. The load path reads the save, checks its schema version, and requests the map bundle associated with the saved scene. Spawn-history compatibility has a separate application-version check in `SpawnHistoryIsValid`.
-
-`PopulateMapAndPlayerStates` distinguishes offline and online saves. Offline continuation uses the single player record. Online continuation identifies the host's saved record and populates reconnect records for the remaining saved participants. `LoadSavedGameScene` restores ascent and run settings before choosing the corresponding scene-loading path.
-
-`PersistentPlayerDataService` has a different scope. It caches player data by actor number, distributes changes, and clears the dictionaries in `ClearSessionData`. It also forwards retained data when characters register. Appearance persistence and unlock storage are covered in the progression chapter; this service's cache should not be mistaken for the campfire save.
-
-## Design decisions
-
-Reusing reconnect data for checkpoint player state avoids a second, independently maintained description of inventory and character conditions. Retaining the last valid sample when a new one is transiently unsuitable is also a deliberate recovery policy.
 
 That reuse requires snapshot ownership to be explicit. A record used for a returning player is still live session state, even when a save operation borrows it. The current code copies a struct containing references and then edits one of its arrays. The apparent value boundary does not isolate the saved state.
 
-## Where it's weak
-
-### Refreshing all characters stops at the first missing registration
-
-`ReconnectHandler.UpdateForAllCharacters` iterates the current players. When it encounters an actor not present in `_observedActors`, it tries to register that actor if ready, otherwise logs the failure. It then breaks out of the loop in either case. Players later in the enumeration are not refreshed.
-
-The caller makes this a persistence defect rather than merely an inaccurate method name. `Quicksave.SaveNow` immediately follows that refresh with `SaveData.Create`. Later players can consequently contribute older records, while an actor that is still absent from the retained dictionary is not included in the dictionary enumeration at all. `SaveData.Create` logs invalid records and proceeds with the remaining ones; it does not turn an incomplete refresh into a failed checkpoint.
-
-A partially initialized player is a reason to defer or reject that player's snapshot. It is not a reason to skip refreshing unrelated, already registered players. Continuing the loop would at least isolate the missing registration. A stronger design would return a refresh result describing whether every required participant has a valid record, leaving `SaveNow` to decide whether to retain the previous checkpoint or commit the new one.
-
-Instead, a single missing registration changes the freshness of records that follow it. Enumeration order becomes part of save quality.
-
-### Preparing the checkpoint changes the reconnect record
+A snapshot that edits its source has missed a fairly basic part of the assignment.
 
 `Quicksave.PlayerRunData.TryCreateFromReconnectData` obtains a `ReconnectData` struct from `ReconnectHandler.TryGetReconnectData`. It applies the checkpoint's campfire adjustments before constructing the serialized player record. The extra-stamina field is a scalar in the copied struct, but the status values live in `currentStatuses`, an array. The local adjustment function writes into that array directly.
 
@@ -59,7 +49,19 @@ The affected consumers are the next reconnect request and any subsequent save th
 
 The better boundary is an owned snapshot: clone mutable arrays before applying save-specific changes, or construct the adjusted representation without writing through the borrowed record. A readonly record field would not solve this; the array contents remain mutable. Saving should not silently change the recovery state it reads.
 
-### Load failure does not end the load operation
+`RunProgress.Create` records the active scene and run progress. Its construction also collects tracked item-spawn history, opened base-camp luggage, and loose items near the campfire. This is selected world persistence rather than a serialization of every live object. `RunManager` uses compatible spawn history during setup and restores saved base-camp items. `Quicksave.FinalizeRunSetup` restores the run clock and day/night values, then clears the temporary loaded-data state.
+
+`Quicksave.SaveNow` serializes the assembled checkpoint and writes directly to the save's final filename with `File.WriteAllText`. There is no temporary-file commit or preservation of the previous completed checkpoint in this method. Its exception handler logs and rethrows; it cannot restore bytes already replaced by a failed write.
+
+The distinction matters because `Exists` is a file-existence check, while `LoadSaveData` attempts to deserialize the contents. A file left incomplete by an interrupted write can still exist and then fail to load. The same single destination is both the previously usable save and the in-progress replacement.
+
+`Campfire.Light_Rpc` shows quicksave feedback only after `SaveNow` returns, so this is not a claim that its success notification precedes a thrown write failure. The problem is the absence of a retained last-good checkpoint when the replacement fails after altering the file.
+
+A temporary write followed by a platform-appropriate atomic replacement, with the previous completed file retained until the new one is committed, would narrow that failure window. This needs separate validation of the new data before commit. Logging a write exception is diagnostic handling, not recovery.
+
+## Loading and session state
+
+Loading begins in `MainMenuMainPage.SetUpContinueButton`. It passes a callback to `Quicksave.TryLoadSave` and combines the result with `Quicksave.Exists` before enabling the continue button. The load path reads the save, checks its schema version, and requests the map bundle associated with the saved scene. Spawn-history compatibility has a separate application-version check in `SpawnHistoryIsValid`.
 
 Inside `Quicksave.TryLoadSave`, the callback from `LoadSaveData` checks the schema version. On incompatibility it destroys the save and invokes the caller with failure. There is no return after that branch. Execution continues into map-bundle preparation and then invokes the same caller again with the earlier load result.
 
@@ -71,17 +73,11 @@ The load method also does not begin its callback by returning on a failed read. 
 
 A load attempt should produce one result after all required checks, and every failure branch should terminate that attempt. The current callback contract forces consumers to validate what success means independently. The menu already does so with the extra existence test.
 
-### The checkpoint file is replaced without a recovery copy
+`PopulateMapAndPlayerStates` distinguishes offline and online saves. Offline continuation uses the single player record. Online continuation identifies the host's saved record and populates reconnect records for the remaining saved participants. `LoadSavedGameScene` restores ascent and run settings before choosing the corresponding scene-loading path.
 
-`Quicksave.SaveNow` serializes the assembled checkpoint and writes directly to the save's final filename with `File.WriteAllText`. There is no temporary-file commit or preservation of the previous completed checkpoint in this method. Its exception handler logs and rethrows; it cannot restore bytes already replaced by a failed write.
+`PersistentPlayerDataService` has a different scope. It caches player data by actor number, distributes changes, and clears the dictionaries in `ClearSessionData`. It also forwards retained data when characters register. Appearance persistence and unlock storage are covered in the progression chapter; this service's cache should not be mistaken for the campfire save.
 
-The distinction matters because `Exists` is a file-existence check, while `LoadSaveData` attempts to deserialize the contents. A file left incomplete by an interrupted write can still exist and then fail to load. The same single destination is both the previously usable save and the in-progress replacement.
-
-`Campfire.Light_Rpc` shows quicksave feedback only after `SaveNow` returns, so this is not a claim that its success notification precedes a thrown write failure. The problem is the absence of a retained last-good checkpoint when the replacement fails after altering the file.
-
-A temporary write followed by a platform-appropriate atomic replacement, with the previous completed file retained until the new one is committed, would narrow that failure window. This needs separate validation of the new data before commit. Logging a write exception is diagnostic handling, not recovery.
-
-## For modders
+## Reading and changing this code
 
 Treat reconnect records as shared state even though `ReconnectData` is a struct. Some members are mutable reference objects, and a copied outer value does not imply an independent snapshot. State inspection and state transformation need different ownership rules.
 

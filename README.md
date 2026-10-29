@@ -14,7 +14,7 @@ The [PEAK EULA](https://store.steampowered.com/eula/3527290_eula_0) includes a r
 
 Rights holders with concerns can open an issue in this repository or contact [42-AH on GitHub](https://github.com/42-AH). I'll respond.
 
-Read in order for the connections between systems, or use the index to follow one responsibility. Each chapter establishes the call paths before criticizing them; unresolved runtime questions stay at the end. The source snapshot is Steam app 3527290, build **26155610**, identified by the installed Steam app manifest. The matching managed assembly reports version `0.0.0.0`, which does not identify the displayed game version. This is a static source analysis, not a record of reproduced gameplay defects.
+Read in order for the connections between systems, or use the index to follow one responsibility. Each chapter follows the code and deals with its problems where they occur; unresolved runtime questions stay at the end. The source snapshot is Steam app 3527290, build **26155610**, identified by the installed Steam app manifest. The matching managed assembly reports version `0.0.0.0`, which does not identify the displayed game version. This is a static source analysis, not a record of reproduced gameplay defects.
 
 ## Index
 

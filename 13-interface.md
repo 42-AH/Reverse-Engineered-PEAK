@@ -1,18 +1,18 @@
 # Menus, HUD, and communication
 
-Tracing the HUD's changing item names and prompts leads to a mixture of polling and callbacks. The interface reads character state, caches parts of inventory state, and also issues gameplay actions through menus, pings, and emotes. Several defects sit in the supposedly passive display code: a null-clearing path continues into a dereference, a prefab cache retains another item's instance data, and a prompt-change detector updates the wrong remembered value.
-
-## What it does
+The HUD mostly reads state and displays it. That should make it one of the easier places to keep cause and effect straight. Instead, the item cells and prompt detectors save little bits of work by caching values they have not quite identified correctly.
 
 The interface connects the main menu and pause pages to the playable scout, then presents inventory, stamina, interaction prompts, climbing feedback, and spectating state. The passport edits appearance; the guidebook renders readable pages onto a held object. Pings and the emote wheel communicate intent to other scouts. These interfaces use different focus and lifecycle mechanisms, so closing a page, hiding a window, releasing a wheel, and putting away a book are distinct operations.
 
-## How it's built
+## Pages, windows, and pause
 
 `MainMenuPageHandler` and `PauseMenuHandler` derive from `UIPageHandler`. Main-menu back input follows `IHaveParentPage.GetParentPage` and transitions to the returned page. The handler also presents connection state, prepares current map information after the version response, and opens the disconnected modal when the connection state requires it. That makes the main menu both a page navigator and a consumer of connection lifecycle events.
 
 `PauseMenuHandler.OnEnable` pauses time in offline mode and activates the main pause page. Its back-input path first follows a parent page, then handles confirmation or modal closure, then permits leaving pause if unpause prevention is inactive. `OnDisable` restores the configured time scale for offline play. Online pause does not stop the shared simulation.
 
 `MenuWindow` is a separate window abstraction. `Open` records the window in `AllActiveWindows`, shows its panel, initializes it once, invokes the open hook, and chooses a starting UI element. `Close` removes it from that list and invokes its close behavior. Properties describe whether a window blocks player input or displays a cursor. `GUIManager.UpdateWindowStatus` aggregates those properties and retains a short input-blocking margin after a blocking window closes.
+
+## The observed character and inventory HUD
 
 The in-game update path is centered on `GUIManager.LateUpdate`:
 
@@ -21,23 +21,9 @@ The in-game update path is centered on `GUIManager.LateUpdate`:
 - Reticle, throwing, rope, dying, emote-wheel, spectating, and pause state are refreshed through separate methods.
 - `UpdateItems` reads `Character.observedCharacter`, allowing inventory and bar presentation to follow the spectated scout rather than always following the local one.
 
-`InventoryItemUI.SetItem` receives an `ItemSlot`. It distinguishes backpack presentation, carried-scout presentation, and ordinary item slots. It stores the prefab and instance data, chooses the icon, updates cooking tint and name, and maintains fuel and selection feedback. `GUIManager.UpdateItemPrompts` separately derives held-item prompts from the local item's UI description and current primary/secondary-use eligibility.
-
-The passport extends `MenuWindow`. `PassportManager.ToggleOpen` prevents reopening while its delayed close animation is running. Tabs alter the preview camera and populate selection buttons; `SetOption` changes character customization and refreshes the dummy preview. The progression chapter traces persistence and unlock requirements beyond that UI boundary.
-
-`Guidebook` remains an item while open. Its owner requests the open state, and `ToggleGuidebook_RPC` changes the collider, animation, page-renderer textures, and page display. For the local holder, `LateUpdate` moves the open book toward the camera's reading position. Single pages report their seen state when opened. Guidebook progress and its readiness defects are covered in the progression chapter.
-
-`PointPinger` checks local input, consciousness, and cooldown, raycasts from the mouse position or controller-centered screen position, and requests a shared ping. The receiving presentation evaluates distance and obstruction between scouts before creating the marker. `EmoteWheel` instead maps pointer or gamepad selection to an emote definition. Disabling the wheel calls `Choose`, which passes the selected animation to `CharacterAnimations.PlayEmote`.
-
-## Design decisions
-
 Using `observedCharacter` for the HUD is appropriate for spectating. It also means the inventory display must tolerate a character whose player reference is not available yet. `GUIManager.UpdateItems` explicitly recognizes that state. The item cell's null path fails to uphold the caller's contract.
 
-The interface's performance strategy is inconsistent. Inventory cells avoid some work when the prefab is unchanged, and item prompts have a change detector, but both caches remember the wrong thing in particular paths. A cache needs an exact statement of what can change independently. Item identity and item type are not interchangeable.
-
-## Where it's weak
-
-### Clearing an absent player dereferences the absent slot
+The caller has already noticed the missing player. The cell manages to turn that precaution back into a dereference.
 
 `GUIManager.UpdateItems` returns when there is no observed character. When there is an observed character but no associated player, it attempts a deliberate reset: it passes null to each inventory cell and the backpack cell, updates prompts, and hides the temporary slot.
 
@@ -47,7 +33,11 @@ This is a matched caller-and-callee failure. The caller has a special path for i
 
 The correct boundary is small: null must terminate the cell update after clearing. An explicit empty-display operation would also avoid using an absent model as an update request. The surrounding UI should be able to clear itself while a spectated character's player association is unavailable; that is the state this caller was written to handle.
 
-### The item-type cache retains old instance data
+`InventoryItemUI.SetItem` receives an `ItemSlot`. It distinguishes backpack presentation, carried-scout presentation, and ordinary item slots. It stores the prefab and instance data, chooses the icon, updates cooking tint and name, and maintains fuel and selection feedback. `GUIManager.UpdateItemPrompts` separately derives held-item prompts from the local item's UI description and current primary/secondary-use eligibility.
+
+The interface's performance strategy is inconsistent. Inventory cells avoid some work when the prefab is unchanged, and item prompts have a change detector, but both caches remember the wrong thing in particular paths. A cache needs an exact statement of what can change independently. Item identity and item type are not interchangeable.
+
+Remembering the item type is cheaper than remembering the item. It is also the wrong cache key for this job.
 
 In the ordinary-slot branch, `InventoryItemUI.SetItem` compares the incoming prefab with `_itemPrefab`. If they match, it updates fuel from the incoming slot, calls `UpdateNameText` and `UpdateCookedAmount`, and returns. It does not assign `_itemData` from the new slot on that path.
 
@@ -56,8 +46,6 @@ In the ordinary-slot branch, `InventoryItemUI.SetItem` compares the incoming pre
 The ordinary caller, `GUIManager.UpdateItems`, runs this method repeatedly. Polling more often does not repair the mismatch: as long as the prefab remains equal, the early return continues to preserve the old data reference. A change of type or a separate clear is needed to reach the assignment below the shortcut.
 
 The prefab comparison is useful for deciding whether the icon texture needs replacing. It is not a valid decision about whether the instance model needs refreshing. Assigning the current data before presentation checks would separate those responsibilities. A stronger display model could compare specific values such as cooking state and fuel while retaining one current item identity. The present shortcut optimizes a type-level display decision by freezing instance-level state.
-
-### The item-prompt detector remembers secondary state as primary
 
 `GUIManager.TestUpdateItemPrompts` reads `CanUsePrimary` and `CanUseSecondary` from the held item. It compares those values with `canUsePrimaryPrevious` and `canUseSecondaryPrevious` and refreshes prompts when either differs. At the end, it assigns the primary history field twice: first from primary eligibility, then from secondary eligibility. The secondary history field is not updated there.
 
@@ -69,7 +57,15 @@ The current HUD has another path that limits the visible consequence: `UpdateIte
 
 The better choice is one well-defined refresh policy. If polling every frame is acceptable, the duplicate history mechanism should go. If updates are meant to be conditional, both history fields must be updated from their respective current values, with item replacement and observed-character changes included in invalidation.
 
-### Wheel shutdown also means committing a selection
+## Passport and guidebook
+
+The passport extends `MenuWindow`. `PassportManager.ToggleOpen` prevents reopening while its delayed close animation is running. Tabs alter the preview camera and populate selection buttons; `SetOption` changes character customization and refreshes the dummy preview. The progression chapter traces persistence and unlock requirements beyond that UI boundary.
+
+`Guidebook` remains an item while open. Its owner requests the open state, and `ToggleGuidebook_RPC` changes the collider, animation, page-renderer textures, and page display. For the local holder, `LateUpdate` moves the open book toward the camera's reading position. Single pages report their seen state when opened. Guidebook progress and its readiness defects are covered in the progression chapter.
+
+## Pings and emotes
+
+`PointPinger` checks local input, consciousness, and cooldown, raycasts from the mouse position or controller-centered screen position, and requests a shared ping. The receiving presentation evaluates distance and obstruction between scouts before creating the marker. `EmoteWheel` instead maps pointer or gamepad selection to an emote definition. Disabling the wheel calls `Choose`, which passes the selected animation to `CharacterAnimations.PlayEmote`.
 
 `EmoteWheel.OnDisable` always calls `Choose`. `Choose` plays the hovered emote when one has been selected; there is no parameter distinguishing confirmation from cancellation. `GUIManager.UpdateEmoteWheel` disables the wheel when the hold condition no longer applies, which includes changes in eligibility and climbing state as well as ordinary release.
 
@@ -77,7 +73,7 @@ Release-to-select is a valid wheel interaction. The problem is placing that comm
 
 This creates a concrete maintenance constraint: adding another reason to hide the wheel requires understanding that visibility teardown can call `CharacterAnimations.PlayEmote`. A presentation cleanup has a gameplay-facing side effect. Explicit confirm and cancel operations would let normal release commit while other shutdown reasons clear the choice. `OnDisable` could then perform cleanup without deciding what the player meant.
 
-## For modders
+## Reading and changing this code
 
 Distinguish the local character from the observed character. Interaction and held-use commands belong to local input, while inventory and status presentation can follow a spectated character. Reading whichever global character reference is closest changes the interface's meaning.
 
