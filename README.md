@@ -1,5 +1,7 @@
 # PEAK teardown
 
+I completely reverse engineered PEAK into an editable private standalone project.
+
 This is my written analysis of how PEAK's code is put together, based on reading a decompile of my own purchased Steam copy. It is not affiliated with Landfall, Aggro Crab, or Team PEAK.
 
 This repository contains no game source code, assets, or extracted data dumps. It contains no cheats, ownership bypasses, or instructions for playing outside Steam. Class and method names identify what the analysis discusses; their implementations are not reproduced.
