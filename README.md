@@ -14,24 +14,24 @@ The [PEAK EULA](https://store.steampowered.com/eula/3527290_eula_0) includes a r
 
 Rights holders with concerns can open an issue in this repository or contact [42-AH on GitHub](https://github.com/42-AH). I'll respond.
 
-Read in order for the connections between systems, or use the index to follow one responsibility. Each chapter follows the code and deals with its problems where they occur; unresolved runtime questions stay at the end. The source snapshot is Steam app 3527290, build **26155610**, identified by the installed Steam app manifest. The matching managed assembly reports version `0.0.0.0`, which does not identify the displayed game version. This is a static source analysis, not a record of reproduced gameplay defects.
+You can read this guide from start to finish to understand how the systems connect, or jump to the index to focus on a specific responsibility. Each chapter walks through the code and examines its problems as they appear in context, with any unresolved runtime questions noted at the end. This analysis is based on the Steam app 3527290, build **26155610**, as identified by the installed Steam app manifest. The matching managed assembly shows version `0.0.0.0`, which doesn't identify the displayed game version. Keep in mind this is a static source analysis rather than a record of reproduced gameplay defects.
 
 ## Index
 
-- [Source inventory](00-inventory.md) — The 87 grouped systems found in the source pass.
-- [Character controller](02-character-controller.md) — Movement, climbing, carrying, ragdoll state, and camera responsibilities.
-- [Stamina and afflictions](03-stamina-afflictions.md) — Status accounting, timed effects, recovery, and restoration semantics.
+- [Source inventory](00-inventory.md) — The 87 grouped systems discovered in the source pass.
+- [Character controller](02-character-controller.md) — Movement, climbing, carrying, ragdoll state, and camera handling.
+- [Stamina and afflictions](03-stamina-afflictions.md) — Status accounting, timed effects, recovery, and restoration mechanics.
 - [Items, inventory, and equipment](04-items-inventory.md) — Item identity, action lifecycles, cooking, backpacks, and specialized equipment.
 - [Daily islands and generation](05-islands-generation.md) — Prepared-scene selection, bundle readiness, placement, and reproducibility.
 - [Weather and environmental hazards](06-weather-environment.md) — Exposure, wind forces, water tracking, sunlight, and physical hazards.
 - [Creatures and unusual biomes](07-creatures-biomes.md) — Target lifetimes, Gloom protection, spider scheduling, and contact hazards.
 - [Airport, ascent, and ending](08-run-lifecycle.md) — Departure, run identity, campfires, death, revival, and final timing.
-- [Multiplayer sessions and replication](09-networking.md) — Session boundaries, ownership, motion correction, and diagnostic accounting.
+- [Multiplayer sessions and replication](09-networking.md) — Session boundaries, ownership, motion correction, and diagnostic tracking.
 - [Voice](10-voice.md) — Capture policy, spatial playback, filtering, and mouth animation.
 - [Saves and reconnection](11-saves-reconnection.md) — Checkpoint construction, reconnect records, load outcomes, and commit strategy.
 - [Achievements, badges, and appearance](12-progression-customization.md) — Platform progress, cosmetic restoration, badge resources, and guidebook state.
 - [Menus, HUD, and communication](13-interface.md) — Page lifecycles, inventory caches, prompts, pings, and emote commitment.
-- [Everything else](14-everything-else.md) — Settings, localization, rendering support, ordinary audio, and optimization.
+- [Everything else](14-everything-else.md) — Settings, localization, rendering support, standard audio, and optimization.
 - [Platform services and integrity](15-platform-services.md) — Platform readiness, service boundaries, reporting, and integrity responsibilities.
 - [Oddities and diagnostic code](16-oddities.md) — Stale inspection state, result observation, and diagnostic lifetimes.
 
