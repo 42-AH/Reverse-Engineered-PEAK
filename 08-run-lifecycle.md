@@ -1,81 +1,81 @@
 # Airport, ascent, and ending
 
-Starting a run sounds like an event. Here it is a handoff between boot services, the airport, scene loading, a run manager, and character state. Ending one brings in the results screen as well. There are plenty of places to say a run has started or stopped; getting them to mean the same thing is the less tidy part.
+Starting a run is more than just launching the game. It's a handoff between boot services, the airport, scene loading, a run manager, and character state. Ending one involves the results screen as well. Many places can signal that a run has started or stopped, but making them all mean the same thing is where things get messy.
 
-The airport lets the player choose an ascent or custom rules and initiate departure. Once the island and character are ready, `RunManager` initializes the run, coordinates its identity and clock, and supports continuation from saved progress. Campfires combine a local interaction with group participation, progression, and saving.
+The airport lets players choose an ascent or custom rules and then depart. Once the island and character are ready, `RunManager` initializes the run, manages its identity and clock, and handles continuation from saved progress. Campfires serve double duty: they provide a local interaction point while also supporting group participation, progression, and saving.
 
-Death changes the character's state and possessions, while revival restores a playable character and updates recovery records. Ending the run classifies individual outcomes before choosing either a cutscene or the results screen. Someone else succeeding is distinct from the local character succeeding, and the results interface has separate presentations for those cases.
+Death modifies the character's state and possessions. Revival brings back a playable character and records the recovery. When the run ends, it classifies individual outcomes before showing either a cutscene or the results screen. Another player succeeding looks different from your character succeeding, and the results interface reflects that distinction.
 
 ## Boot and departure
 
-`GameBooter.Initialize` registers application and scene callbacks. `AutoBoot` creates the game object and initializes `GameHandler` and `UIInputHandler` on the first scene notification. Invitation readiness is handled separately through the networking interfaces described in chapter 09.
+`GameBooter.Initialize` sets up application and scene callbacks. `AutoBoot` creates the game object and initializes `GameHandler` and `UIInputHandler` when the first scene loads. Invitation readiness happens separately through the networking interfaces in chapter 09.
 
-Departure follows this chain:
+Departure follows this sequence:
 
-- `AirportCheckInKiosk.Interact_CastFinished` opens the boarding pass and supplies its kiosk reference.
-- `BoardingPass.StartGame` resolves its selected ascent in relation to custom-run mode and calls the kiosk.
-- `AirportCheckInKiosk.StartGame` submits the selected run settings for departure when loading is not already active.
-- `LoadIslandMaster` selects the destination; `BeginIslandLoadRPC` applies the ascent and run settings before starting the loading process.
+- `AirportCheckInKiosk.Interact_CastFinished` opens the boarding pass and passes its kiosk reference along.
+- `BoardingPass.StartGame` resolves the selected ascent for custom-run mode and calls the kiosk.
+- `AirportCheckInKiosk.StartGame` submits the run settings for departure if loading isn't already underway.
+- `LoadIslandMaster` picks the destination. `BeginIslandLoadRPC` applies the ascent and run settings, then starts loading.
 
-Chapter 05 covers the scene catalogue and bundle prerequisite. Here the important boundary is that selecting a destination is not equivalent to starting the run clock.
+Chapter 05 explains the scene catalogue and bundle requirements. The key distinction here is that choosing a destination doesn't start the run clock.
 
 ## Starting a run
 
-`RunManager.Start` initializes map state and waits for room membership, a local character, and completion of loading. An airport character ends this initialization path without starting a run. An island character reaches `StartRun`. The non-host then attempts to obtain the run identity; the host performs its own delayed setup, publishes a new identity for a fresh run, and starts time synchronization. The saved-run branch restores spawn history and finalizes saved setup instead.
+`RunManager.Start` sets up map state and waits for room membership, a local character, and loading to finish. An airport character stops there without starting a run. An island character moves forward to `StartRun`. The non-host then retrieves the run identity, while the host sets things up with a delay, publishes a new identity for a fresh run, and begins time synchronization. If restoring from a save, that branch rebuilds spawn history and completes the saved setup instead.
 
-Looking up a run identifier is easy. Making sure a run has one turns out to be a separate chore.
+Getting a run identifier is straightforward. Making sure the run actually has one is the tricky part.
 
-`RunManager.GetRunId` calls `NetCode.Matchmaking.TryGetLobbyData` but ignores its success result. It immediately passes the returned string to `Guid.Parse`, then marks the identity as obtained. A missing or malformed value is not represented as a pending initialization state; parsing throws before the success flag is set.
+`RunManager.GetRunId` calls `NetCode.Matchmaking.TryGetLobbyData` but ignores whether it succeeds. It passes the returned string directly to `Guid.Parse`, then marks the identity as retrieved. A missing or invalid value doesn't register as a pending state; parsing fails before the success flag gets set.
 
-The caller makes the timing issue concrete. In `RunManager.Start`, a non-host calls `GetRunId` after its own loading prerequisites complete. The host's fresh-run identity publication occurs later in its setup path, after an explicit wait. Local scene readiness and availability of the published identity are not the same event, but the client path treats its first as sufficient for the second.
+The calling code reveals the timing problem. In `RunManager.Start`, a non-host calls `GetRunId` once its loading prerequisites are done. The host publishes its fresh-run identity later in its setup, after an explicit wait. Local scene readiness and published identity availability aren't the same moment, but the client treats the first as sufficient for the second.
 
-There is also a separate `RPC_ReceiveRunId` path that can supply the identity. That path does not validate the earlier assumption; it means there are two possible sources of identity readiness whose ordering must be coordinated. If the message has already arrived, `_hasRunId` avoids the lookup. If it has not, the lookup still assumes that a valid value is immediately available.
+There's also a separate `RPC_ReceiveRunId` path that can deliver the identity. That path doesn't verify the earlier assumption, so there are two possible sources for identity readiness whose order needs coordinating. If the message arrived first, `_hasRunId` skips the lookup. If not, the lookup still assumes a valid value is there right away.
 
-The immediate cost is an exception in initialization when the prerequisite is absent or invalid. It also leaves identity-dependent consumers with a readiness contract they must infer. `Quicksave` obtains the identity from `RunManager` when constructing run progress, while the diagnostic display reads the same property. Neither property access itself expresses whether identity establishment succeeded.
+The immediate problem is an initialization exception when the prerequisite is missing or malformed. It also leaves identity-dependent consumers without a clear readiness contract. `Quicksave` grabs the identity from `RunManager` when it builds run progress, and the diagnostic display reads the same property. Neither property access actually signals whether identity setup worked.
 
-Run identity readiness is not modeled properly. The code needs pending, valid, and failed outcomes, with message receipt and property lookup both going through checked validation. Until that transition succeeds, consumers do not have an identity to use. Adding a longer delay would only disguise the missing coordination. The dependency is real; the implementation treats it like a timing assumption.
+Run identity readiness isn't modeled correctly. The code should track pending, valid, and failed states, with both message receipt and property lookup going through proper validation. Until that validation passes, consumers shouldn't assume they have an identity. A longer delay would just hide the missing coordination. The dependency is real; the implementation treats it like a timing issue.
 
-Validation belongs at both entry points. Parsing the message path and the lookup path through one checked operation would prevent the same state from having two different assumptions about readiness and input validity.
+Both entry points need validation. Running the message path and lookup path through a single checked operation would stop the same state from making different assumptions about readiness and input quality.
 
-`StartRun` subscribes to room population and owner changes and schedules an end-condition check. `RunManager.Update` advances the clock while active, periodically synchronizes it on the host, and performs scheduled checks. `OnCharacterRegistered` supplies time state to an arriving character. The registered character and the run's shared identity therefore have different readiness paths.
+`StartRun` listens for room population and owner changes and queues an end-condition check. `RunManager.Update` moves the clock forward while active, periodically syncs it on the host, and runs scheduled checks. `OnCharacterRegistered` sends time state to a character when it arrives. The registered character and the run's identity have different paths to being ready.
 
 ## Campfires, death, and revival
 
-Campfire participation is explicit. `EveryoneInRange` compares nearby characters against living participants. `Light_Rpc` updates the fire, then either ends a miniature run at its ending campfire or advances the map through `MapHandler.GoToSegment`. The progression path also requests a quicksave. Morale effects and nearby-character recovery are additional campfire responsibilities; cooking uses the item machinery described in chapter 04 rather than defining the checkpoint transition itself.
+Joining a campfire is a deliberate choice. `EveryoneInRange` compares nearby characters against active participants. `Light_Rpc` updates the fire, then either ends a miniature run at its ending campfire or moves the map through `MapHandler.GoToSegment`. The progression path also triggers a quicksave. Morale shifts and nearby-character recovery are other campfire roles; cooking relies on the item system from chapter 04 rather than defining the checkpoint transition itself.
 
-Checkpoint progression similarly combines several outcomes without treating them as interchangeable. A lit fire has visual state; an advancing fire changes segment state; a saved checkpoint persists progress. The saved-run setup path must restore those relationships rather than merely positioning the player near a campfire.
+Checkpoint progression mixes several outcomes without treating them as the same thing. A lit fire has visuals, an advancing fire changes segment state, and a saved checkpoint preserves progress. Restoring from a save requires rebuilding those relationships rather than just placing the player near a campfire.
 
-Death reaches `Character.RPCA_Die`, which unequips, sets dead state, records the event, drops items, handles the death representation, and moves the character before checking the run-ending condition. `CheckEndGame` performs the master-side all-dead check. Ghost presentation is separate: `PlayerGhost.RPCA_InitGhost` associates an owner and target and restores the owner's visual customization, with special handling for the owner's own view.
+Death flows into `Character.RPCA_Die`, which unequips items, marks the character as dead, logs the event, drops possessions, handles the death display, and repositions the character before checking if the run should end. `CheckEndGame` does the host-side check for all-dead. Ghost display is separate: `PlayerGhost.RPCA_InitGhost` links an owner to a target and restores the owner's cosmetics, with special logic for how the owner sees themselves.
 
-Revival follows `RPCA_ReviveAtPosition` into `ReviveCharacter`. The latter resets death and unconsciousness state, clears relevant effects, and optionally applies post-revival status. The caller then moves the character, updates progress and statistics, and tells `ReconnectHandler.UpdateFromRevive` about the new position. That recovery update matters because revival is both a current gameplay change and a new state from which later reconnection must resume.
+Revival starts at `RPCA_ReviveAtPosition` and continues into `ReviveCharacter`. That function resets death and unconsciousness, removes related effects, and optionally adds post-revival status. The caller then moves the character, updates progress and stats, and alerts `ReconnectHandler.UpdateFromRevive` to the new position. That recovery update matters because revival is both an immediate gameplay change and a new checkpoint from which later reconnection continues.
 
 ## Ending the run
 
-`Character.RPCEndGame` performs outcome processing. It marks game over, clears resumable save data, classifies characters through `CheckWinCondition`, and updates their statistics. Depending on the result and run mode, it opens `EndScreen` directly or starts the appropriate `PeakHandler` ending sequence. It then raises the run-ended event and calls `RunManager.EndGame`.
+`Character.RPCEndGame` processes the outcome. It marks game over, wipes resumable save data, evaluates characters through `CheckWinCondition`, and refreshes their stats. Depending on the result and run mode, it opens `EndScreen` immediately or launches the appropriate `PeakHandler` ending sequence. It then fires the run-ended event and calls `RunManager.EndGame`.
 
-The ordinary summit outcome considers a living character's summit or helicopter-rope state; miniature-run and Nadir paths use their own branch. `PeakHandler.EndCutscene` and `EndCutsceneFinal` prepare different presentations before reaching the results interface. `EndScreen` displays the elapsed time, plays the timeline, and distinguishes personal success, another player's success, and failure. The ending is a coordination path across managers, not one scene-load call.
+The standard summit result checks whether a living character has reached the summit or is on the helicopter rope; miniature-run and Nadir use different logic. `PeakHandler.EndCutscene` and `EndCutsceneFinal` build different presentations before heading to the results screen. `EndScreen` shows elapsed time, plays the timeline, and tells apart personal success, another player's success, and failure. Ending involves coordinating multiple managers, not just one scene load.
 
-The character layer owns the final classification, while `RunManager` owns shared timing and identity. This lets character-specific outcomes feed one results sequence, but it requires the clock to become final before result consumers use it. The results interface also triggers time-achievement evaluation, so elapsed time is gameplay data rather than decorative text.
+The character layer determines the final result, while `RunManager` handles shared timing and identity. That way character-specific outcomes feed into one results sequence, but it requires the clock to stop before result consumers read it. The results screen also triggers time-achievement checks, so elapsed time is gameplay data, not just window dressing.
 
-A stopped clock should be the uncomplicated part of this arrangement.
+A stopped clock should be the straightforward part of this design.
 
-`RunManager.TimeSinceRunStarted` adds the current frame's delta when the clock has not been updated during that frame. This compensates for access before `Update` while the clock is running. The getter does not check `timerActive`, however. Once the clock stops, subsequent frames still meet the not-updated-this-frame condition, so the getter returns the stored final time plus the caller's current frame delta.
+`RunManager.TimeSinceRunStarted` includes the current frame's delta when the clock hasn't been updated that frame. This compensates for access before `Update` runs while the clock is active. The getter doesn't check `timerActive` though. After the clock stops, frames still satisfy the not-updated-this-frame condition, so the getter returns the stored final time plus whatever delta the caller's frame contributes.
 
-This is not an indefinitely advancing stopped timer: the extra delta is not written back to the stored time. It is a read-time offset that changes with the frame on which a consumer asks. That distinction limits the defect but does not remove it. A final elapsed time should not depend on the duration of the results screen's current frame.
+This isn't a stopped timer that keeps advancing indefinitely. The extra delta never gets written back to the stored time; it's just a read-time offset that shifts each frame a caller asks for it. This limitation reduces the issue but doesn't eliminate it. A final elapsed time shouldn't fluctuate based on how long the results screen's current frame takes.
 
-Synchronization adds another offset. `RPC_SyncTime` adjusts incoming time by elapsed network time regardless of the accompanying active flag. Applying that adjustment to a running clock estimates its current value. Applying it to a stopped clock changes the final result based on when the stop message arrives. The method has enough information to distinguish those cases but uses the running-clock treatment for both.
+Network synchronization introduces another offset. `RPC_SyncTime` adjusts incoming time by elapsed network time regardless of whether the accompanying active flag is set. For a running clock, that adjustment estimates its current value. For a stopped clock, it changes the final result depending on when the stop message arrives. The method has the information to tell these cases apart but applies running-clock logic to both.
 
-`RunManager.EndGame` sends a stopped-clock update, and `EndScreen` later reads `TimeSinceRunStarted` for its time label. `AchievementManager.TestTimeAchievements` also reads that property, converts it to a whole-second value, and uses it for time-based results. `CharacterStats` uses the same clock when recording timeline entries. The final-time contract therefore reaches display, progression evaluation, and run history.
+`RunManager.EndGame` sends a stopped-clock update, and `EndScreen` later reads `TimeSinceRunStarted` to populate its time label. `AchievementManager.TestTimeAchievements` reads that same property, converts it to a whole-second value, and uses it for time-based progression. `CharacterStats` uses the clock when adding timeline entries. The final-time contract therefore affects display, achievement evaluation, and run history.
 
-The problem is the absence of an immutable final elapsed value. A stopped clock is represented by a boolean beside a value whose getter and synchronization path continue performing live-time adjustments. Different consumers can read at different frames, and participants can receive the stop update at different times.
+The core issue is that there's no immutable final elapsed value. A stopped clock is just a boolean next to a value whose getter and synchronization continue applying live-time adjustments. Different consumers read at different frames, and stop updates reach participants at different times.
 
-The clock's final-state contract is broken. Finalization should capture one elapsed value and publish it without live-clock or transmission-age adjustments. An inactive accessor should return that value. Results and time-achievement checks should not each receive an estimate of a run that has already stopped. Keeping running-clock compensation alive in the finished state adds uncertainty precisely where the code should be removing it.
+The clock's final-state contract has broken down. Finalization should lock in a single elapsed value and share it without applying live-clock or transmission-age adjustments. An inactive accessor should return that value straightforwardly. Results and time-achievement checks shouldn't each get a fresh estimate for a run that's already finished. Keeping running-clock compensation active after the run ends only adds uncertainty where the code should be cutting it off.
 
 ## Reading and changing this code
 
-Separate scene readiness from run readiness. A character can exist before identity setup has completed, and a checkpoint's visual state does not by itself describe saved progression. Changes to revival also need to account for statistics and reconnect records, not just health or position.
+Decouple scene readiness from run readiness. A character can exist before identity setup finishes, and a checkpoint's visual state alone doesn't convey saved progression. Changes to revival need to account for statistics and reconnect records alongside health and position.
 
-Treat final results as shared gameplay data. A presentation change should not introduce a new time estimate or classify victory independently of `CheckWinCondition`. Lower-level movement and status changes belong in their own systems, but their completion signals must remain consistent with the lifecycle consumers.
+Handle final results as shared gameplay data. A presentation change shouldn't create a new time estimate or determine victory separately from `CheckWinCondition`. Lower-level movement and status updates can live in their own systems, but their completion signals must stay aligned with what lifecycle consumers expect.
 
 ## Open questions
 

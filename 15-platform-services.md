@@ -1,78 +1,78 @@
 # Platform services and integrity
 
-The menu sits in front of several external services: identity, version information, social features, reports, and appeals. A local method returning is not the same thing as a service accepting a request. This ought to be a basic distinction for this code. The UI repeatedly has to live without it.
+The menu interfaces with several external services: identity, version information, social features, reports, and appeals. A method that returns locally works differently than a service that accepts a request. This distinction matters for this code, but the UI tends to overlook it.
 
-The platform layer connects the game to the player's account and external services. It supplies statistics and achievements, rich presence, communication permissions, and platform storage. The user service supports authentication and reporting, while game-side UI presents sanctions and appeals. A version service supplies compatibility and cross-platform configuration. A checksum-based mod-state path informs the game that selected installed files differ from its reference state. These responsibilities overlap at the menu, but they are not interchangeable measures of trust or connectivity.
+The platform layer connects the game to the player's account and external services. It handles statistics and achievements, rich presence, communication permissions, and platform storage. The user service manages authentication and reporting, while the game's UI displays sanctions and appeals. A version service provides compatibility and cross-platform configuration. A checksum-based mod-state path tells the game when selected installed files differ from their reference state. These responsibilities converge at the menu, but treating them as equivalent measures of trust or connectivity is incorrect.
 
 ## Identity and initialization
 
-`PlatformManager` initializes the selected platform at Unity lifecycle boundaries, delegating the work to the platform implementation. In the inspected Steam-oriented user implementation, `UserManager.Initialize` selects a Steam identity provider and an Epic online-service implementation. `LoginAsync` obtains platform identity information and passes it to the online service, then retains the returned user. Authentication renewal is attached through `OnUserAuthenticationAboutToExpire` and `RenewAuthAsync`.
+`PlatformManager` initializes the selected platform at Unity lifecycle boundaries, delegating to the platform implementation. In the Steam-oriented user implementation examined here, `UserManager.Initialize` picks a Steam identity provider and an Epic online-service implementation. `LoginAsync` retrieves platform identity information, passes it to the online service, and stores the returned user. Authentication renewal happens via `OnUserAuthenticationAboutToExpire` and `RenewAuthAsync`.
 
-A successful login needs a success message. It does not need to print the credential.
+A successful login needs a success message. It should never print the credential itself.
 
-`UserManager.LoginAsync` logs the returned user's authentication token on the successful-login branch. This puts a credential into the ordinary diagnostic stream alongside routine success messages. The logging is part of the successful path, not restricted to an exception where extra information was being gathered.
+`UserManager.LoginAsync` logs the returned user's authentication token in the successful-login branch. This sends a credential into the standard diagnostic stream alongside routine success messages. The logging is part of the success path, not confined to an exception handler.
 
-The immediate consumer is Unity's logging system. A diagnostic record that should establish only that login succeeded is instead given the credential itself. Any later handling of that diagnostic output must therefore treat it as sensitive. This chapter does not reproduce a credential, identify a live session, or provide instructions for extracting one.
+The immediate recipient is Unity's logging system. A diagnostic record meant only to confirm that login succeeded instead includes the credential. Any subsequent handling of that log output must therefore treat it as sensitive. This chapter does not reproduce a credential, identify a live session, or explain how to extract one.
 
-Logging an authentication token is a serious secret-handling defect. The success path needs a result and, if useful, a nonsecret correlation reference. It has no business copying the credential into ordinary diagnostics. Redaction by every later log consumer is not a substitute for excluding the secret at the call site. `UserManager.LoginAsync` expands the places that must protect the credential without making its success report meaningfully better.
+Logging an authentication token represents a serious secret-handling flaw. The success path needs a result and, optionally, a nonsecret correlation reference. There is no justification for copying the credential into routine diagnostics. Redacting the secret at every subsequent log consumer cannot replace excluding it at the source. `UserManager.LoginAsync` expands the number of places that must protect the credential without improving its success report in any meaningful way.
 
 ## Gameplay consumers
 
-The gameplay-facing code accesses those services through different consumers:
+The gameplay code accesses these services through various consumers:
 
-- `AchievementManager` requests and stores platform statistics; its progression responsibilities are covered separately.
-- `CharacterVoiceHandler` checks communication permission before allowing transmission.
-- `ReportPlayerPopup.OnReportPlayer` validates the selected report category and forwards the report to `UserManager.ReportPlayer`.
-- `BlocklistTable` combines locally saved entries with platform entries and notifies listeners when block state changes.
-- `NetworkConnector.OnSanctionsChanged` and `MainMenuMainPage` interpret sanction state for connection behavior and user-facing options.
+- `AchievementManager` requests and stores platform statistics; its progression role is addressed separately.
+- `CharacterVoiceHandler` verifies communication permission before allowing transmission.
+- `ReportPlayerPopup.OnReportPlayer` checks the selected report category and sends the report to `UserManager.ReportPlayer`.
+- `BlocklistTable` merges locally saved entries with platform entries and alerts listeners when block state changes.
+- `NetworkConnector.OnSanctionsChanged` and `MainMenuMainPage` evaluate sanction state to determine connection behavior and user-facing options.
 
 ## Version information
 
-`CloudAPI.CheckVersion` requests current compatibility information and invokes the supplied response callback on a successful response. `MainMenuPageHandler.Start` consumes it to update next-level information and prepare the relevant map bundle. A separate coroutine waits for `CloudAPI.CrossplaySettings.IsValid` before applying server settings. `CloudAPI.OnResponse` fills that configuration from the received response.
+`CloudAPI.CheckVersion` retrieves current compatibility information and calls the supplied response callback when successful. `MainMenuPageHandler.Start` uses it to refresh next-level information and load the appropriate map bundle. A separate coroutine waits for `CloudAPI.CrossplaySettings.IsValid` before applying server settings. `CloudAPI.OnResponse` populates that configuration from the response.
 
-The weaker boundary is asynchronous completion. Several methods hide an external result behind logging or use a callback that is not guaranteed to run. The UI then has to infer whether an attempt has finished from local state that describes something else.
+The weaker point is asynchronous completion. Several methods conceal an external result behind logging or rely on callbacks that may never execute. The UI then guesses whether an operation finished by examining local state that describes something unrelated.
 
-`CloudAPI.CheckVersion` clears its querying status when the request completes. On success it parses the response and invokes the callback. On an error it logs the error, but the connection-error branch does not invoke the callback at all. Other error categories produce a response that marks the version unacceptable.
+`CloudAPI.CheckVersion` clears its querying status when the request finishes. On success it parses the response and triggers the callback. On error it logs the problem, but the connection-error branch skips the callback entirely. Other error types produce a response marking the version unacceptable.
 
-`MainMenuPageHandler.Start` has two consumers of this operation. Its response callback updates next-level and map-bundle information, while `AssignCrossplaySettings` waits until the configuration becomes valid. That configuration is populated through `CloudAPI.OnResponse`, which is combined with the supplied callback. On an initial connection failure, neither consumer gets a completed result and the configuration wait has no local failure exit.
+`MainMenuPageHandler.Start` has two users of this operation. The response callback updates next-level and map-bundle information, while `AssignCrossplaySettings` waits for the configuration to become valid. `CloudAPI.OnResponse` populates that configuration alongside the supplied callback. When a connection fails initially, neither user receives a completed result, and the configuration wait has no local path to failure.
 
-The querying status being cleared does not solve that dependency. It describes request completion; it does not populate the configuration or notify the callback consumer that no configuration will arrive from this attempt. The caller has no typed outcome distinguishing temporary unavailability from version rejection.
+Clearing the querying status does not solve this dependency. It signals request completion; it does not fill the configuration or tell the callback consumer that no configuration will come from this attempt. The caller lacks a typed outcome that separates temporary unavailability from version rejection.
 
-`CloudAPI.CheckVersion` fails its callers on the connection-error path. Completing the request without completing the callback leaves dependent work waiting for a success state that this attempt will never supply. Return a typed outcome for success, transport failure, and rejection, and make the configuration wait observe it. The present interface offloads its missing failure handling onto consumers that were never given the information to recover.
+`CloudAPI.CheckVersion` leaves callers stranded on the connection-error path. Finishing the request without invoking the callback leaves dependent work waiting for a success that will never arrive. Use a typed outcome covering success, transport failure, and rejection, and make the configuration wait observe it. The current interface passes its missing failure handling to consumers without giving them the information they need to recover.
 
 ## Presence and integrity
 
-Rich presence is more narrowly scoped. `RichPresenceService` delegates through `IRichPresence`, refreshes on room membership changes, and accepts status updates from the main menu, airport, and mountain progression. `SteamRichPresence.SetState` publishes the current activity and party size using Steam's presence interface. This is an identified social feature, not evidence of an unspecified gameplay analytics system.
+Rich presence has narrower scope. `RichPresenceService` delegates through `IRichPresence`, refreshes when room membership changes, and accepts status updates from the main menu, airport, and mountain progression. `SteamRichPresence.SetState` publishes the current activity and party size via Steam's presence interface. This is a defined social feature, not evidence of an unspecified gameplay analytics system.
 
-Platform interfaces keep most gameplay consumers from handling provider-specific operations directly. Rich presence has a particularly small interface: gameplay selects an activity, and the provider publishes it.
+Platform interfaces prevent most gameplay consumers from handling provider-specific operations directly. Rich presence has a particularly simple interface: gameplay picks an activity, and the provider publishes it.
 
-`ModUtility.InitialiseAsync` computes checksums for a selected collection of installed files and compares them with reference information. The resulting mod-state flag is consumed by the main-menu warning path and room setup. That establishes a compatibility-related signal. It does not establish the existence, absence, or completeness of a separate anti-cheat system, and this chapter does not describe how to alter the signal.
+`ModUtility.InitialiseAsync` calculates checksums for a chosen set of installed files and compares them against reference information. The resulting mod-state flag is used by the main-menu warning path and room setup. This creates a compatibility-related signal. It does not confirm the presence, absence, or completeness of a separate anti-cheat system, and this chapter does not explain how to change the signal.
 
 ## Reports and appeals
 
-The reporting UI and the user-service implementation were both inspected. That matters because a popup disappearing is a local action, while a successful report is an external operation. The two do not share a completion result in this implementation.
+Both the reporting UI and the user-service implementation were examined. This distinction matters because closing a popup is local, while a successful report is external. These two outcomes do not share a completion result in this implementation.
 
-Closing the form is much easier than finding out whether the report arrived.
+Finding out whether a report was received is much harder than making the popup disappear.
 
-`ReportPlayerPopup.OnReportPlayer` calls `UserManager.ReportPlayer`, invokes its local `OnReport` event, and hides the popup. `UserManager.ReportPlayer` is an asynchronous void method. It awaits the external report operation internally, but exposes neither a task nor a completion callback to the popup. A failure is logged; an unauthenticated call returns without submission.
+`ReportPlayerPopup.OnReportPlayer` calls `UserManager.ReportPlayer`, fires its local `OnReport` event, and closes the popup. `UserManager.ReportPlayer` is an asynchronous void method. It awaits the external report operation internally but gives the popup neither a task nor a completion callback. Failures are logged; unauthenticated calls return without submitting.
 
-The popup therefore cannot distinguish a successfully accepted report from a failed attempt when deciding to close. Its hide path resets the form's state. The user's feedback is based on having dispatched the call rather than having received a result from the service.
+The popup cannot tell a successful report from a failed attempt when deciding whether to close. Its close path resets the form. Users receive feedback based on dispatching the call, not on receiving a result from the service.
 
-This does not mean that reports normally fail. It means that failure and success are indistinguishable to the UI that collected the report. The user cannot get delivery feedback from this call path, and the form has already been cleared when an asynchronous failure is logged.
+This does not mean reports usually fail. It means failure and success look the same to the UI that gathered the report. Users cannot get reliable delivery confirmation from this path, and the form disappears before any asynchronous failure gets logged.
 
-The reporting flow gives the user no trustworthy delivery feedback. `ReportPlayer` hides the result behind asynchronous void execution while the popup closes and clears the form. Return an awaitable outcome, show pending state, and retain the text on failure. Dispatch is not acceptance. Treating a user-authored report like optional fire-and-forget telemetry is a bad interface decision with an obvious cost when submission fails.
+The reporting flow provides no reliable delivery feedback to users. `UserManager.ReportPlayer` hides the result in asynchronous void execution while the popup closes and clears. Provide an awaitable outcome, show a pending state, and keep the text if submission fails. Sending a request is not the same as the service accepting it. Treating a user-authored report as optional fire-and-forget telemetry is a poor interface choice with an obvious cost when submission goes wrong.
 
-`UserManager.SendAppeal` sets `HasSentAppealThisSession` before awaiting the external appeal operation. Failed results and caught exceptions are logged without clearing that flag. `MainMenuMainPage` checks the flag when presenting the appeal path.
+`UserManager.SendAppeal` sets `HasSentAppealThisSession` before it awaits the external appeal operation. Failed results and any caught exceptions get logged, but the flag itself is never cleared. When `MainMenuMainPage` checks this flag to decide whether to show the appeal path, it relies on that setting.
 
-The variable's consumer therefore treats an attempted submission as an already sent appeal. A network or service failure still leaves the session in the state used to suppress another submission through that path. This is a local lifecycle decision, not evidence that the server accepted an appeal or imposed a submission limit.
+The flag's consumer therefore treats any attempted submission as if the appeal was already sent. A network or service failure leaves the session in a state that blocks another submission through that path, even though this is just a local lifecycle decision. It does not mean the server accepted an appeal or that any submission limit was enforced.
 
-`HasSentAppealThisSession` is incorrectly used for both an attempt and a successful submission. An in-flight flag can block simultaneous requests, but it must clear when the attempt ends. A separate accepted-result flag can track success. The current code leaves the session marked sent after failure, so the UI suppresses recovery from a request that did not succeed. That is an avoidable lockout created by the client's own bookkeeping.
+The problem is that `HasSentAppealThisSession` conflates two different things: an attempt and a successful submission. While an in-flight flag can prevent simultaneous requests, it needs to clear when the attempt finishes. A separate flag could track successful results instead. Right now the session stays marked as sent even after failure, which causes the UI to suppress any recovery from a request that never succeeded. This lockout is something the client creates through its own state management.
 
 ## Reading and changing this code
 
-Treat platform initialization, user authentication, statistics readiness, and room connectivity as different states. A feature that needs one of them should inspect that dependency rather than infer it from another service being available. The achievement and voice chapters show distinct consumers of those states.
+When working with this code, separate platform initialization, user authentication, statistics readiness, and room connectivity as independent states. Features that depend on one of these should check that specific dependency directly rather than inferring it from whether another service is available. The achievement and voice chapters demonstrate how different parts of the system consume these states.
 
-Keep compatibility signals and account restrictions separate from visual customization. This analysis describes their responsibilities without supplying alteration instructions. Diagnostic material should be reviewed for sensitive content before it is shared, particularly because the inspected login path logs more than a success indication.
+Keep compatibility signals and account restrictions distinct from visual customization. This analysis describes what each one does without offering specific changes. Before sharing diagnostic material, review it for sensitive content. This matters especially because the login path being examined logs more information than just a success indicator.
 
 ## Open questions
 
