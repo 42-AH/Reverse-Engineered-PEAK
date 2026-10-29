@@ -29,7 +29,7 @@ There is a concrete path capable of replacing the slot's data object: `Player.Sy
 
 This is a diagnostic correctness issue. An observer investigating whether an inventory update arrived can consult a page that still reads an older reference. The page also retains every cell it has discovered for its lifetime, so its work grows with historical discoveries rather than being bounded by the currently inspected inventory.
 
-The page should reconcile a current identity-to-data map each update: remove departed entries, add new entries, and rebind entries whose data object changed. If historical inspection is intentional, it needs an explicit history mode with timestamps and a visible distinction from current inventory. A live scan feeding an unlabeled permanent collection expresses neither contract clearly.
+The item inspector is not maintaining a current view. It adds entries, keeps departed ones, and fails to rebind an existing identity to a replacement data object. Reconcile the live identity-to-data map: remove, add, and refresh references. If history is wanted, label it as history and timestamp it. Mixing a live scan with an unlabeled permanent collection makes the diagnostic misleading, which is worse than simply giving it a narrow scope.
 
 Its coverage also needs a label. The scan visits ordinary player item slots; it does not recursively enumerate backpack contents or all world items. The better tool would state that scope or provide separately identified views. Expanding the title is cheaper than debugging a system from an assumed inventory that was never inspected.
 
@@ -43,7 +43,7 @@ An initialized `MapDebugUI` subscribes `OnSceneLoad` to the static `SceneManager
 
 The event publisher outlives an ordinary scene component. Without removing the subscription, destroying the component does not remove its delegate from that publisher's invocation list. A later scene-loaded notification can continue invoking the retained managed callback. A subsequent initialized display adds another subscriber rather than replacing the old one.
 
-The concrete cost is retained instance state and redundant scene-search work after the display's intended lifetime. The failure is in ownership of the subscription, not in what the audio searches return. The class already has an initialization boundary; it needs a paired teardown boundary that unregisters the handler, with repeated cleanup safe for partially initialized instances.
+`MapDebugUI` registers a scene callback without owning its teardown. That retains instance state and can repeat scene searches after the display's intended lifetime. The fix belongs beside initialization: unregister the handler, and make repeated cleanup safe for partial setup. A diagnostic component does not get an exemption from lifecycle management just because it is used to inspect somebody else's code.
 
 ## Generation completion
 
@@ -66,7 +66,7 @@ Completion and success are different facts. The immediate branch promotes the fi
 
 The helper's exception flag also has asymmetric maintenance. The deferred path sets or clears `ThrewException`, but the immediate-success branch does not update it. A wrapper previously marked as having thrown can retain that flag while invoking a new success callback. The callback and stored diagnostic state then describe different outcomes.
 
-Both branches should pass through one result-observation routine. That routine should retrieve the result, set the outcome state, and invoke the callback once. Already being complete should remove the need to wait; it should not remove the need to determine whether the work succeeded. This change would give validation consumers one consistent contract.
+`ForgottenAwaitable` is an unreliable success reporter. Already-completed work still needs its result observed; skipping that step lets a completed failure receive success treatment. Both branches must use one routine that retrieves the result, updates outcome state, and invokes the callback once. The current split makes timing determine whether an exception is recognized. That is particularly bad in a helper used by validation code: the tool can report success because it failed to look.
 
 The source also contains command registration and specialized inspection helpers. Their presence establishes development infrastructure in the assembly, not universal availability through the retail interface. No activation procedure is needed to analyze their responsibilities.
 

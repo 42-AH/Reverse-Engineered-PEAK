@@ -34,7 +34,7 @@ Replacing the material's texture reference does not express a lifecycle for the 
 
 The implementation also creates the texture before checking whether the supplied sash renderer is null. In that branch it has allocated and filled a texture that will not be assigned anywhere. Validation belongs before allocation.
 
-A per-renderer owned texture could be updated in place and released when its owner is destroyed. If replacement is necessary, the owner should release its previous generated texture. Either option would make the resource lifetime explicit rather than relying on eventual scene or unused-resource cleanup.
+`BadgeUnlocker` allocates resources without owning their replacement lifecycle. Updating one owned texture in place would avoid the repeated allocations; replacing it requires explicitly releasing the previous generated texture. Neither responsibility belongs to eventual scene cleanup. The null-renderer branch is worse: it allocates and fills a texture before establishing that there is anywhere to put it. Validate first. This is careless resource management in a routine visual refresh.
 
 ## Passport choices and appearance
 
@@ -56,7 +56,7 @@ This changes which branch restores the accessory. An unavailable mouth result se
 
 The defensive bounds checks do not consistently repair every unavailable value. `SetCharacterAccessory` and `GetAccessoryIndex` correct values above the catalog's upper bound but do not establish a lower bound. `CharacterCustomizationData.CorrectValues` repeats that upper-bound-only policy. A value outside the accepted lower range therefore is not made valid merely by passing through those named correction points.
 
-A single category-specific read-and-validate operation would keep the retrieved value, fallback, and catalog bounds together. The current sequence repeats near-identical read blocks while carrying all their temporary results through one method. The wrong field is a direct consequence of that organization, and the downstream setters do not provide a complete validation boundary.
+`TryGetCosmeticsFromSteam` contains a plain wrong-field bug, and the surrounding design makes that mistake easy to introduce. Near-identical read blocks keep unrelated temporary results in scope, then the supposed correction methods check only one end of the valid range. Put the category's value, bounds, and fallback in one read-and-validate operation. The current duplication buys no flexibility; it produces a mouth-dependent accessory decision and fails to contain the invalid values downstream.
 
 ## Guidebook progress
 
@@ -70,7 +70,7 @@ The statistic wrapper itself reports failure when the platform is unavailable. O
 
 There is a second ownership problem around early page observations. `AchievementManager.TriggerSeenGuidebookPage` can update the current `guidebookData`, while `OnUserStatsReceived` calls `InitGuidebookData`, which replaces that object before loading. `GuidebookData.LoadGuidebookPagesSeen` deliberately merges observations already present in its own instance, but that merge cannot preserve observations held by the discarded instance. The code provides a merge policy and then creates a fresh object at the boundary where that policy is needed.
 
-A failed read should leave initialization incomplete, and observations gathered while loading should remain in an owned pending set until a successful merge. Reusing the existing record at statistics readiness would retain those observations. The current arrangement gives object creation and data readiness overlapping responsibility for what counts as loaded.
+Guidebook initialization claims success it has not established. A rejected read must leave the record pending, and observations gathered during loading must survive until they can be merged. Replacing the record at statistics readiness discards exactly the early observations the merge was meant to protect. Reuse the owned record or retain a pending set. The current sequence undermines both readiness and preservation while presenting a reassuring `HasInitialized` flag.
 
 ## Reading and changing this code
 

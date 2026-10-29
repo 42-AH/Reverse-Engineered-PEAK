@@ -35,7 +35,7 @@ The sensing budget is in frames; the creature, inconveniently, lives in time.
 
 The loop also wraps within the same update when fewer spiders exist than the per-frame budget. An eligible remaining spider can be scanned repeatedly in that frame. That spends repeated proximity and sensing work without adding elapsed-time coverage, while larger populations receive less frequent individual attention.
 
-A time-based sensing schedule should specify a desired revisit interval and use a bounded work budget to distribute due scans. A per-frame budget can still protect frame time, but the scheduler should track overdue work and avoid scanning the same spider repeatedly in one update. That would expose the tradeoff between load and responsiveness instead of letting it emerge implicitly from frame rate and list length.
+`SpiderManager` budgets work but fails to define responsiveness in time. The revisit interval is left to frame rate and list length, with repeated scans in one update possible for a short list. A due-time schedule with a bounded per-frame budget would preserve load control while making latency explicit. The present arrangement makes the sensing policy an accidental consequence of rendering speed. That is a poor basis for consistent creature behavior.
 
 ## Targets, traps, and contact effects
 
@@ -51,7 +51,7 @@ The preceding `PruneThiefAssignments` does not establish the missing invariant. 
 
 The resulting failure boundary is a client-side null dereference during assignment processing. It depends on the assignment outliving local availability of its victim, rather than on any particular visibility rule. Host authority to dismiss the creature should not determine whether a client is allowed to dereference the victim.
 
-Lookup failure should stop target-dependent processing on every participant. The host can additionally own the decision to retire or reassign the thief; other clients can retain a pending assignment until the character becomes available or the authoritative update removes it. This separates authority over the creature's lifecycle from the local precondition for reading a character object.
+The client path is wrong to proceed after victim lookup fails. Host authority decides whether to retire or reassign the thief; it does not make a missing client-side character safe to dereference. Every participant must stop target-dependent work until it has a target. Combining that validity check with the host-only lifecycle decision leaves a predictable null-dereference boundary during assignment processing.
 
 `Scorpion` derives from `Mob` and overrides `InflictAttack`. Its local-character effect combines an immediate poison contribution, a timed poison affliction, and force. This is an example of specialization inside a shared framework, unlike the antlion's self-contained target and attack flow.
 
@@ -73,7 +73,7 @@ The order is incorrect for zones with different protection radii. A zone can be 
 
 The problem is not whether the radii should be larger or smaller. It is that selection precedes eligibility. Changing a radius changes which points expose the error but does not fix the query.
 
-Protection queries should first identify zones that actually protect the point or character, then choose among those if a consumer needs one representative zone. A separate nearest-zone query can remain available for presentation or navigation. Combining those two questions into one nearest-center helper makes a geometrically valid answer serve as an invalid protection answer. The per-zone character method is virtual, so candidate eligibility should also preserve any specialized protection rule rather than assuming that center distance completely describes it.
+`GloomSafeZone` answers the wrong question for its protection consumers. Selecting the nearest center before checking eligibility can reject protection supplied by another valid zone. Larger radii do not fix a query that selects first and validates afterward. Find eligible protecting zones first, preserving each zone's virtual protection rule; choose a representative only if one is actually needed. Nearest-center lookup can remain a separate operation. Using it as a protection test is simply the wrong algorithm.
 
 `GloomVoiceConfuser.Update` manages `VoiceThief.Assignments`, resolves the assigned character, and evaluates separation and visibility through `StatusFieldGloom`. `CharacterCanSeePoint` considers character state, whether the endpoints are inside the field, distance, and field of view. Voice transport belongs in chapter 10; here the relevant responsibility is deciding which creature assignment is active and what that assignment means.
 

@@ -31,7 +31,7 @@ The caller has already noticed the missing player. The cell manages to turn that
 
 This is a matched caller-and-callee failure. The caller has a special path for incomplete player state, and the callee advertises handling that path through its opening null check. The handler then proceeds into the state it just recognized as unavailable. An exception there aborts that update before the intended reset sequence completes.
 
-The correct boundary is small: null must terminate the cell update after clearing. An explicit empty-display operation would also avoid using an absent model as an update request. The surrounding UI should be able to clear itself while a spectated character's player association is unavailable; that is the state this caller was written to handle.
+`InventoryItemUI.SetItem` has a broken empty-state path. Clearing a null slot must end the update before the method dereferences that slot. The caller already handles an unavailable player by asking the cell to clear itself; the cell defeats that precaution. An early return or an explicit clear operation is enough. This is a straightforward null-handling mistake in code whose entire purpose includes displaying an empty slot.
 
 `InventoryItemUI.SetItem` receives an `ItemSlot`. It distinguishes backpack presentation, carried-scout presentation, and ordinary item slots. It stores the prefab and instance data, chooses the icon, updates cooking tint and name, and maintains fuel and selection feedback. `GUIManager.UpdateItemPrompts` separately derives held-item prompts from the local item's UI description and current primary/secondary-use eligibility.
 
@@ -45,7 +45,7 @@ In the ordinary-slot branch, `InventoryItemUI.SetItem` compares the incoming pre
 
 The ordinary caller, `GUIManager.UpdateItems`, runs this method repeatedly. Polling more often does not repair the mismatch: as long as the prefab remains equal, the early return continues to preserve the old data reference. A change of type or a separate clear is needed to reach the assignment below the shortcut.
 
-The prefab comparison is useful for deciding whether the icon texture needs replacing. It is not a valid decision about whether the instance model needs refreshing. Assigning the current data before presentation checks would separate those responsibilities. A stronger display model could compare specific values such as cooking state and fuel while retaining one current item identity. The present shortcut optimizes a type-level display decision by freezing instance-level state.
+The inventory cache uses the wrong level of identity. An unchanged prefab can justify keeping an icon; it cannot justify keeping another instance's data. Refresh the instance model before deciding which visual work to skip. By putting the shortcut ahead of that assignment, `InventoryItemUI` preserves stale state while congratulating itself on avoiding an update. The optimization is incorrect, not merely incomplete.
 
 `GUIManager.TestUpdateItemPrompts` reads `CanUsePrimary` and `CanUseSecondary` from the held item. It compares those values with `canUsePrimaryPrevious` and `canUseSecondaryPrevious` and refreshes prompts when either differs. At the end, it assigns the primary history field twice: first from primary eligibility, then from secondary eligibility. The secondary history field is not updated there.
 
@@ -55,7 +55,7 @@ When secondary use is available, the unchanged secondary history makes the compa
 
 The current HUD has another path that limits the visible consequence: `UpdateItems` calls `UpdateItemPrompts` again during normal updates. That means this defect does not establish a permanently stale prompt in the current implementation. Instead, a broken change detector sits alongside unconditional refresh, so the interface pays for both designs while relying on the less selective one for correctness.
 
-The better choice is one well-defined refresh policy. If polling every frame is acceptable, the duplicate history mechanism should go. If updates are meant to be conditional, both history fields must be updated from their respective current values, with item replacement and observed-character changes included in invalidation.
+The prompt code maintains a broken change detector alongside unconditional refresh. That is redundant complexity without the promised saving. Choose a policy: poll and remove the dead bookkeeping, or fix both remembered values and invalidate on item and observed-character changes. The unconditional path limits the visible damage today, but it also hides the defect waiting for someone to remove the apparently unnecessary refresh.
 
 ## Passport and guidebook
 
@@ -71,7 +71,7 @@ The passport extends `MenuWindow`. `PassportManager.ToggleOpen` prevents reopeni
 
 Release-to-select is a valid wheel interaction. The problem is placing that commitment in a general component lifecycle callback. Any owner that disables the wheel inherits selection commitment even when its purpose is to remove an unavailable interface. There is no separate cancellation operation in the wheel for that owner to use.
 
-This creates a concrete maintenance constraint: adding another reason to hide the wheel requires understanding that visibility teardown can call `CharacterAnimations.PlayEmote`. A presentation cleanup has a gameplay-facing side effect. Explicit confirm and cancel operations would let normal release commit while other shutdown reasons clear the choice. `OnDisable` could then perform cleanup without deciding what the player meant.
+`EmoteWheel.OnDisable` confuses hiding a control with confirming the player's choice. That is a bad lifecycle hook for a gameplay action. Every new reason to hide the wheel inherits a possible call to `CharacterAnimations.PlayEmote`, whether confirmation was intended or not. Give confirm and cancel separate operations and leave disabling to cleanup. The current shortcut makes an ordinary UI change require knowledge of an unrelated action side effect.
 
 ## Reading and changing this code
 

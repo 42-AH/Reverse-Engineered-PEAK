@@ -18,7 +18,7 @@ Refreshing everyone stops being a group operation at the first missing registrat
 
 The caller makes this a persistence defect rather than merely an inaccurate method name. `Quicksave.SaveNow` immediately follows that refresh with `SaveData.Create`. Later players can consequently contribute older records, while an actor that is still absent from the retained dictionary is not included in the dictionary enumeration at all. `SaveData.Create` logs invalid records and proceeds with the remaining ones; it does not turn an incomplete refresh into a failed checkpoint.
 
-A partially initialized player is a reason to defer or reject that player's snapshot. It is not a reason to skip refreshing unrelated, already registered players. Continuing the loop would at least isolate the missing registration. A stronger design would return a refresh result describing whether every required participant has a valid record, leaving `SaveNow` to decide whether to retain the previous checkpoint or commit the new one.
+The refresh loop has the wrong failure scope. One unregistered player is a reason to defer that player's snapshot, not abandon unrelated players that appear later in the enumeration. Continue past the missing registration and return an explicit completeness result so `SaveNow` can decide whether to commit. Letting one incomplete participant silently determine the freshness of everyone after it is poor checkpoint logic.
 
 Instead, a single missing registration changes the freshness of records that follow it. Enumeration order becomes part of save quality.
 
@@ -47,7 +47,7 @@ A snapshot that edits its source has missed a fairly basic part of the assignmen
 
 The affected consumers are the next reconnect request and any subsequent save that reuses the retained record before a valid refresh replaces it. `ReconnectData.CreateFromCharacter` creates a fresh array when a replacement is accepted, but `UpdateReconnectData` deliberately retains the old record when the new sample is invalid. Snapshot freshness determines how long the unintended mutation remains available.
 
-The better boundary is an owned snapshot: clone mutable arrays before applying save-specific changes, or construct the adjusted representation without writing through the borrowed record. A readonly record field would not solve this; the array contents remain mutable. Saving should not silently change the recovery state it reads.
+The save path violates snapshot ownership. Copying a struct does not copy the mutable arrays it references, and a readonly field would not repair that either. Clone the arrays before making save-specific adjustments, or construct a separate representation. A save operation that changes the reconnect state it reads is doing damage outside its responsibility. Calling the result a snapshot does not make it one.
 
 `RunProgress.Create` records the active scene and run progress. Its construction also collects tracked item-spawn history, opened base-camp luggage, and loose items near the campfire. This is selected world persistence rather than a serialization of every live object. `RunManager` uses compatible spawn history during setup and restores saved base-camp items. `Quicksave.FinalizeRunSetup` restores the run clock and day/night values, then clears the temporary loaded-data state.
 
@@ -57,7 +57,7 @@ The distinction matters because `Exists` is a file-existence check, while `LoadS
 
 `Campfire.Light_Rpc` shows quicksave feedback only after `SaveNow` returns, so this is not a claim that its success notification precedes a thrown write failure. The problem is the absence of a retained last-good checkpoint when the replacement fails after altering the file.
 
-A temporary write followed by a platform-appropriate atomic replacement, with the previous completed file retained until the new one is committed, would narrow that failure window. This needs separate validation of the new data before commit. Logging a write exception is diagnostic handling, not recovery.
+The file commit strategy is inadequate for a checkpoint. Validate the new data, write it separately, then use a platform-appropriate atomic replacement while retaining the last completed file until the new one is committed. The present path exposes the previous checkpoint to a failed replacement without that recovery arrangement. Logging the exception afterward explains the loss; it does not protect the save.
 
 ## Loading and session state
 
@@ -71,7 +71,7 @@ The actual menu consumer limits one visible consequence. `MainMenuMainPage.SetUp
 
 The load method also does not begin its callback by returning on a failed read. It continues with the shared loaded-data state and version logic. This combines reading, compatibility rejection, state clearing, and caller notification without one terminal outcome.
 
-A load attempt should produce one result after all required checks, and every failure branch should terminate that attempt. The current callback contract forces consumers to validate what success means independently. The menu already does so with the extra existence test.
+The load callback has a broken completion contract. A failed check must end the attempt; the caller should receive one final result after all prerequisites are satisfied. Instead, consumers have to reinterpret success themselves. `MainMenuMainPage` already adds an existence check around the load callback. That defensive check is evidence of a boundary that callers cannot trust, not a reason to leave the loader's behavior alone.
 
 `PopulateMapAndPlayerStates` distinguishes offline and online saves. Offline continuation uses the single player record. Online continuation identifies the host's saved record and populates reconnect records for the remaining saved participants. `LoadSavedGameScene` restores ascent and run settings before choosing the corresponding scene-loading path.
 

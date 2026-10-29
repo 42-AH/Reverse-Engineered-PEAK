@@ -27,7 +27,7 @@ The generic API looks rather more type-safe than the dictionary behind it actual
 
 `Item.GetData<T>` builds on that contract. It can create a default for an absent key, but a present value of the wrong type throws instead of reaching the default path. The distinction is relevant to real consumers: `ItemCooking` expects integer cooking state, `RopeSpool` expects floating-point fuel, and `ItemPocketBehaviorInstanceBase.behaviorEnabled` expects a boolean activation value. Those expectations live at the call sites.
 
-The concrete cost is a runtime failure boundary for an internal schema mistake. A component can register a value successfully and fail later when another component reads it. The error then appears in cooking, equipment updates, or pocket behavior rather than at the incompatible write. This moves a schema maintenance error into a gameplay update.
+The generic surface promises more safety than the data model provides. An incompatible key/value pair can be registered successfully and fail only when another component reads it. That is a schema mistake allowed to survive until a cooking, equipment, or pocket-behavior update. The error belongs at registration, where both sides of the contract are available. Pushing it into a later gameplay read makes diagnosis harder for no benefit.
 
 A typed key should carry its value contract, or a central schema should validate the key/value pairing at registration. Reads should distinguish absent data from incompatible data, with a diagnostic identifying the expected and actual types. Silently treating an incompatible value as absent would only conceal the disagreement. The same contract should cover restoration so an invalid entry cannot become ordinary working state merely because it was restored rather than freshly registered.
 
@@ -52,7 +52,7 @@ This is not how the neighboring selectors behave. `OnPressed`, `OnHeld`, and `On
 
 `CharacterItems.DoUsing` makes the gap more consequential to understand: releasing primary input reaches `CancelUsePrimary`, and that cancellation path is also used when an item becomes unusable. `OnCancelled` therefore does not express a distinct successful button-release event. Treating the two names as interchangeable would hide a semantic choice from whoever configures the action.
 
-The repair depends on the intended contract. If release is a supported stage, it needs an explicit event and a defined relationship to cancellation and completed casts. If it is unsupported, the inert selector should be removed or clearly rejected by validation. Leaving it exposed makes an apparently valid configuration fail silently. The base component advertises a behavior it does not implement.
+The advertised action stage is broken. Either release is supported and needs an event with defined cancellation semantics, or it is unsupported and must be rejected during configuration. Leaving the selector available while `ItemAction.Subscribe` provides no subscription is the worst option: the setup looks valid and quietly does nothing. This is not an obscure runtime tradeoff. The base component advertises behavior it does not implement.
 
 Consumption is also staged. `Action_Consume.RunAction` starts `Item.ConsumeDelayed`; `Item.Consume` handles the consumed-item event, the holder's animation and current slot, and deactivates the item object. Restoring hunger and removing the consumed object are different responsibilities, connected through the configured action lifecycle.
 
@@ -72,7 +72,7 @@ The mismatch is between the size of the saved state and the size of the state be
 
 That distinction matters for an author adding a food with a separate wrapper, filling, or decoration material. Preserving those original tint differences requires a workaround outside the current default cooking path. Changing the cooking multiplier cannot recover information that was never stored.
 
-The replacement should preserve a baseline for each material slot it intends to modify, or explicitly designate the slots that receive cooking coloration. A rendering parameter layer could then apply the cooking contribution without overwriting unrelated material choices. The essential fix is matching the granularity of the saved baseline to the granularity of the writes. Replacing one color constant with another does not address this mechanism.
+`ItemCooking` loses information because its saved baseline is less detailed than the material writes it performs. That is a bad restoration design. Preserve a baseline per affected slot or explicitly name the slots that receive cooking color, then apply the cooking contribution there. A different color constant will not repair the mismatch. The code needs to stop flattening distinctions it later claims to restore.
 
 ## Equipment and delayed actions
 
@@ -86,7 +86,7 @@ The downstream work is not a harmless delay. `AskRoutine` updates the attached i
 
 The result is that invoking another ask does not cancel the prior outer sequence through this guard. Its remaining work can continue, including reaching later presentation operations. The spam check reduces which sequences proceed to a spoken response; it does not repair cancellation, and it occurs after the initial attachment-update loop.
 
-Retaining the outer coroutine handle would make the existing cancellation logic effective. A complete lifetime contract would also define what happens when the item is stashed, consumed, or loses its holder during the delay, and would clear the handle when the sequence finishes. The cost of the present implementation is a presentation sequence that appears to have replacement semantics in `Ask` but does not actually enforce them.
+`Ask` contains cancellation logic without retaining the handle that would make it work. That is broken replacement behavior, not merely untidy bookkeeping. Store the outer coroutine handle, clear it on completion, and define what ends the sequence when the holder or item disappears. As written, the method looks as though a new request cancels the previous response, but it does not enforce that promise.
 
 ## Reading and changing this code
 

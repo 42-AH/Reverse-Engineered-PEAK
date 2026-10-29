@@ -14,7 +14,7 @@ A successful login needs a success message. It does not need to print the creden
 
 The immediate consumer is Unity's logging system. A diagnostic record that should establish only that login succeeded is instead given the credential itself. Any later handling of that diagnostic output must therefore treat it as sensitive. This chapter does not reproduce a credential, identify a live session, or provide instructions for extracting one.
 
-A success boolean, provider label, and nonsecret correlation reference would be sufficient to distinguish a successful request from a failed one. Secret material should be excluded before the logging call rather than relying on every later log consumer to redact it. The credential adds exposure without improving the ordinary success result.
+Logging an authentication token is a serious secret-handling defect. The success path needs a result and, if useful, a nonsecret correlation reference. It has no business copying the credential into ordinary diagnostics. Redaction by every later log consumer is not a substitute for excluding the secret at the call site. `UserManager.LoginAsync` expands the places that must protect the credential without making its success report meaningfully better.
 
 ## Gameplay consumers
 
@@ -38,7 +38,7 @@ The weaker boundary is asynchronous completion. Several methods hide an external
 
 The querying status being cleared does not solve that dependency. It describes request completion; it does not populate the configuration or notify the callback consumer that no configuration will arrive from this attempt. The caller has no typed outcome distinguishing temporary unavailability from version rejection.
 
-A result containing success, transport failure, and compatibility rejection would let the caller choose a retry or a visible degraded state. The configuration wait should observe that result rather than wait only for success. The present interface can finish the request while leaving its consumers unfinished.
+`CloudAPI.CheckVersion` fails its callers on the connection-error path. Completing the request without completing the callback leaves dependent work waiting for a success state that this attempt will never supply. Return a typed outcome for success, transport failure, and rejection, and make the configuration wait observe it. The present interface offloads its missing failure handling onto consumers that were never given the information to recover.
 
 ## Presence and integrity
 
@@ -60,13 +60,13 @@ The popup therefore cannot distinguish a successfully accepted report from a fai
 
 This does not mean that reports normally fail. It means that failure and success are indistinguishable to the UI that collected the report. The user cannot get delivery feedback from this call path, and the form has already been cleared when an asynchronous failure is logged.
 
-Returning an awaitable result would let the popup show a pending state, retain the submitted text on failure, and clear it only after successful acceptance. A fire-and-forget notification is suitable for optional telemetry; a user-authored report needs an outcome its author can see.
+The reporting flow gives the user no trustworthy delivery feedback. `ReportPlayer` hides the result behind asynchronous void execution while the popup closes and clears the form. Return an awaitable outcome, show pending state, and retain the text on failure. Dispatch is not acceptance. Treating a user-authored report like optional fire-and-forget telemetry is a bad interface decision with an obvious cost when submission fails.
 
 `UserManager.SendAppeal` sets `HasSentAppealThisSession` before awaiting the external appeal operation. Failed results and caught exceptions are logged without clearing that flag. `MainMenuMainPage` checks the flag when presenting the appeal path.
 
 The variable's consumer therefore treats an attempted submission as an already sent appeal. A network or service failure still leaves the session in the state used to suppress another submission through that path. This is a local lifecycle decision, not evidence that the server accepted an appeal or imposed a submission limit.
 
-There are legitimate reasons to prevent repeated simultaneous requests. An in-flight flag should cover that case, then be cleared when the request ends. A separate accepted-result flag can represent a successful submission. Combining both meanings prevents the UI from offering recovery after a failed attempt.
+`HasSentAppealThisSession` is incorrectly used for both an attempt and a successful submission. An in-flight flag can block simultaneous requests, but it must clear when the attempt ends. A separate accepted-result flag can track success. The current code leaves the session marked sent after failure, so the UI suppresses recovery from a request that did not succeed. That is an avoidable lockout created by the client's own bookkeeping.
 
 ## Reading and changing this code
 

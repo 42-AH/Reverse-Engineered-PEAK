@@ -12,7 +12,7 @@ A standing controller ought to choose its ground deliberately. Here, the order i
 
 The callers make that difference relevant. `OnCollision` adds samples from body-part contacts, and `RaycastGroundCheck` can add a terrain sample before evaluation. The selected contact supplies `groundPos`, `groundNormal`, and the ground-relative `currentHeadHeight`. That last value feeds `Stand`, which applies corrective forces to the head, torso, and hip. Contact selection reaches the standing controller; it is not merely diagnostic information.
 
-Changing contact order can change the ground reference even when the set of accepted contacts is unchanged. That is a bad dependency for a standing controller: the collection's ordering becomes part of the physics policy without an explicit selection rule. The better option was to select by a deliberate criterion, consistently, as the adjacent fallback already does with height. `EvaluateGroundChecks` does not do that.
+`EvaluateGroundChecks` has a bad selection rule: later contact wins, whether or not it is the better ground reference. Reordering the same accepted contacts can therefore change the input to `Stand`. That is an unnecessary dependency on collection order inside a physics controller. The adjacent `IsLodged` code already demonstrates a deliberate height comparison; this path does not bother to maintain the same standard. Pick a criterion and apply it. Leaving contact order to decide is not a defensible substitute.
 
 ## Climbing and attachment state
 
@@ -26,7 +26,7 @@ The flags have specialized names. Unfortunately, that does not give them a singl
 
 Consumers repeat the same knowledge. `Character.CheckStand`, `CheckGravity`, `CheckMovement`, `CheckJump`, and `CheckSprint` separately enumerate climbing conditions, as does `CharacterGrabbing.CanGrab`. Some checks deliberately differ: gravity and jumping also account for a climb handle, for example. That means replacing the repetitions with a single broad check would require understanding those distinctions first.
 
-Every transition and permission check has to carry the same knowledge. A change to an attachment mode needs an audit of its entry method, its exit method, general cancellation, and every permission check that recognizes it. The declarations do not enforce mutual exclusion; the writers do. An explicit mode with centralized entry and exit rules would put that invariant in one place while retaining separate movement solvers. The current design makes adding another attachment mode a cross-component consistency exercise.
+This is poor state ownership, and adding another climbing mode will make it worse. Its entry, exit, cancellation, and permission rules must all be updated across components that have no enforced agreement. `CharacterData` permits combinations that its writers are expected to avoid by convention. A central transition owner and an explicit attachment mode would enforce that agreement while leaving the specialized solvers alone. Instead, every change comes with a scavenger hunt for the other booleans that need clearing.
 
 ## Carrying, visibility, and camera
 
@@ -36,7 +36,7 @@ Helping hands and carrying are different mechanisms. `CharacterGrabbing.Reach` f
 
 The recovery condition can remain true on following physics ticks, so the same repair can run repeatedly. Elsewhere, `Character.BreakCharacterCarrying` treats `isCarried` as sufficient reason to call through the carrier reference. The state accepted by the recovery path is consequently a state another consumer does not safely handle. If that consumer runs while the inconsistency remains, it dereferences the missing carrier.
 
-Anyone changing carry behavior must distinguish a normal drop from disappearance recovery, despite both being exits from the same relationship. A shared local cleanup operation could clear the relationship and restore physics together, with network notification handled separately. Instead, `CarrierGone` repairs presentation and collisions while leaving the relationship broken. Later callers inherit the contradiction.
+`CarrierGone` is a broken cleanup path. It restores enough presentation and collision state to look like recovery while retaining a relationship that no longer exists. `RPCA_Drop` already shows that leaving a carry relationship requires more work; the exceptional path simply does less of it. One shared local cleanup operation should clear the relationship and restore physics, with network notification handled separately. Duplicating that job has produced contradictory state and left later callers to trip over it.
 
 `MainCameraMovement.GetHeadOffset` branches on wall-climbing state, but both branches apply the same interpolation toward the same offset. That condition cannot produce a different climbing offset. The cost is small but specific: the method advertises a distinction that its behavior does not contain, and someone tracing camera placement must verify both branches before learning that. One shared calculation would remove the false distinction. The ragdoll blend in `CharacterCam` changes position and orientation independently.
 

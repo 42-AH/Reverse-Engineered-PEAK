@@ -33,7 +33,7 @@ There is also a separate `RPC_ReceiveRunId` path that can supply the identity. T
 
 The immediate cost is an exception in initialization when the prerequisite is absent or invalid. It also leaves identity-dependent consumers with a readiness contract they must infer. `Quicksave` obtains the identity from `RunManager` when constructing run progress, while the diagnostic display reads the same property. Neither property access itself expresses whether identity establishment succeeded.
 
-A better design would keep an explicit pending, valid, or failed identity state. A successful typed message or a successful validated lookup would transition to valid; a temporarily unavailable value would remain pending rather than being parsed as if ready. Consumers that require a run identity should wait for that transition. This is a dependency to coordinate, not a reason to make a longer fixed delay and hope that publication has finished.
+Run identity readiness is not modeled properly. The code needs pending, valid, and failed outcomes, with message receipt and property lookup both going through checked validation. Until that transition succeeds, consumers do not have an identity to use. Adding a longer delay would only disguise the missing coordination. The dependency is real; the implementation treats it like a timing assumption.
 
 Validation belongs at both entry points. Parsing the message path and the lookup path through one checked operation would prevent the same state from having two different assumptions about readiness and input validity.
 
@@ -69,7 +69,7 @@ Synchronization adds another offset. `RPC_SyncTime` adjusts incoming time by ela
 
 The problem is the absence of an immutable final elapsed value. A stopped clock is represented by a boolean beside a value whose getter and synchronization path continue performing live-time adjustments. Different consumers can read at different frames, and participants can receive the stop update at different times.
 
-The finalization path should capture elapsed time once and distribute that captured value without advancing it for transmission delay. The public clock accessor should return the captured value whenever inactive. Running-clock estimation can remain separate, including compensation for local update order and network age. That would make results and time-based evaluation consume one final quantity rather than independent estimates of a run that has already ended.
+The clock's final-state contract is broken. Finalization should capture one elapsed value and publish it without live-clock or transmission-age adjustments. An inactive accessor should return that value. Results and time-achievement checks should not each receive an estimate of a run that has already stopped. Keeping running-clock compensation alive in the finished state adds uncertainty precisely where the code should be removing it.
 
 ## Reading and changing this code
 

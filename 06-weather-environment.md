@@ -29,7 +29,7 @@ The heat consumer therefore depends on an artistic output as well as its own vol
 
 That coupling makes lighting review part of gameplay-balance review. A brighter light is not merely a brighter image in this path, and the source offers no separate heat-eligibility contract explaining that dependency to a profile author. The shelter raycast establishes obstruction, but it cannot distinguish an intentional heat change from a visual intensity adjustment.
 
-A shared environmental model should expose a sunlight or heat contribution intended for gameplay, with its own profile inputs. Lighting can derive its visual intensity from the same time and weather state without making the light component the authority for damage eligibility. If the coupling is intentional, validation should at least report which profile transitions cross the heat threshold so a visual change cannot silently alter the hazard.
+Using the rendered sun intensity as the authority for heat eligibility is bad separation of responsibilities. It turns lighting edits into potential hazard edits. Gameplay should read an environmental heat value; lighting can derive its appearance from the same time and weather inputs. If the coupling is intentional, it still needs validation of which profile changes cross the heat threshold. At present, an art adjustment can carry a gameplay consequence that the light component does not advertise.
 
 ## Wind
 
@@ -47,7 +47,7 @@ There are three versions of exposure here, and agreement between them is left to
 
 The factor belongs to one sampled position, but the force consumer treats it as applicable to every passed character. A locally owned bot at another location receives force scaled by the local player's exposure rather than its own light-volume sample. The method's ownership guard narrows which characters receive force; it does not correct the source of the exposure factor. Equipment and raycast adjustments are evaluated for the target character, making the mixed sampling scopes especially easy to overlook.
 
-The consequence is a positional dependency between otherwise separate characters. Changing the local player's shelter changes the shared factor used for the bot's force. A target-parameter method should not silently import another target's exposure.
+`AddWindForceToCharacter` has a misleading target boundary: it accepts one character while importing an exposure factor derived from the local player. Changing that player's shelter can change the factor applied to a bot elsewhere. The target argument does not actually contain the information needed to explain the result. That is a bad dependency between separate characters, and it belongs in the force calculation's inputs rather than being smuggled in through shared state.
 
 The item path has a different mismatch. `FixedUpdate` reaches its item loop whenever item movement is enabled; that loop is outside the active-wind and delayed-force conditions used for the local character. `AddWindForceToItem` does not multiply by `currentForceMult` or check `windActive`. With the intensity-curve option disabled, it uses a constant strength factor. An inactive wind period therefore does not, by this path, stop item acceleration. With the curve option enabled, the result depends on the retained intensity value rather than a shared active-period rule.
 
@@ -69,7 +69,7 @@ This is a lifetime failure, not a disagreement about water depth. The classifier
 
 The code also keeps the dictionary across disable and re-enable; `OnDisable` stops the coroutine and removes event subscriptions but does not clear tracked membership. That teardown is correct for the subscriptions and incomplete for the tracked-object lifetime. The dictionary's current contents cannot safely be treated as a live-character set merely because discovery runs repeatedly.
 
-Removal should be part of reconciliation: gather dead entries, remove them outside enumeration, and guard consumers against objects disappearing between scans. The zone should also define whether disabling clears membership or merely suspends it. Either choice needs a validity check when work resumes. Periodic discovery alone does not maintain a valid registry.
+`WaterZone` does discovery without finishing the cleanup job. Skipping a destroyed entry leaves it in the registry for other consumers to encounter. Remove dead entries outside enumeration and guard against disappearance between scans; define what happens to membership on disable as well. A periodically refreshed collection is not a valid registry merely because new objects get added to it. This one neglects the other half of maintenance.
 
 `WaterfallPusher.OnTriggerEnter` uses a different contact path. It identifies a local character through the ragdoll collider, applies a cooldown, and combines falling, camera feedback, and force. Ordinary water movement restrictions and waterfall knockback do not share the same trigger or lifetime.
 

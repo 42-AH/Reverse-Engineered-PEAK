@@ -27,7 +27,7 @@ The icon answers whether the player wanted to transmit. The microphone is allowe
 
 There is another consequence inside the handler. Because the denial clears `m_currentlyTransmitting`, the next requested-transmission update sees a change again. It enables the recorder in `PushToTalk` and disables it again later in `Update`. This is repeated property churn for a condition already known to the handler. It does not establish that an audio packet escapes the restriction; the source shows competing writes within the update, not the recorder's scheduling.
 
-Transmission intent should remain a distinct value, with the effective permission-and-input result assigned once to the recorder and exposed to the UI. A denial reason could be retained separately for settings or feedback. Here, the public state and the operational state disagree precisely when accurate feedback matters.
+The public transmission state is misleading. `transmitting` reports requested behavior while the recorder obeys the permission-filtered result. The UI consequently gets the wrong source of truth when transmission is denied. Keep intent separate, compute effective transmission once, and give that result to both the recorder and the indicator. This is basic state ownership, and the current split gets it wrong exactly when the feedback matters.
 
 ## Playback and filtering
 
@@ -39,7 +39,7 @@ When `VoiceObscuranceFilter.Update` detects a character voice during a cinematic
 
 For a surviving filter instance that exits cinematic mode, parameter updates therefore do not restore the components the cinematic branch disabled. The handler has reversible playback policy while the filter has a one-way component-state change. That difference matters to the consumer chain: struggling, obstruction, and stolen-voice calculations still execute, but updating a disabled filter's cutoff does not put that filter back into the signal path.
 
-The proper restoration cannot simply enable every component unconditionally. `VoiceObscuranceFilter.Start` separately disables several effects in the airport. A transition must restore the applicable baseline, including that scene policy, rather than assume all filters started enabled. Capturing the baseline or explicitly assigning the desired enabled state in both modes would make the lifecycle local and inspectable. The current method relies on something outside itself to end the lifetime of the disabled state.
+The cinematic transition is incomplete. It disables filtering without locally restoring the applicable state afterward. Blindly enabling everything would also be wrong because `VoiceObscuranceFilter.Start` has an airport policy of its own. Capture the baseline or explicitly assign the desired state on both sides of the transition. Leaving another component or lifecycle event to undo this method's changes is not a restoration strategy.
 
 ## Voice position
 
@@ -55,7 +55,7 @@ That breaks the intended progression across a large displacement. The first call
 
 The actual consumer is the remote `AudioSource` transform. The limited value is not just a debug estimate: it is assigned to the object from which the voice plays. `VoiceThief` uses `SetOverride` without demanding an immediate jump, and clearing that override also enters the transition interval. Both directions depend on the provider retaining the transition's output.
 
-The better state is the last emitted voice position, updated with the returned result. Target history can be stored separately if it is needed for another purpose. This implementation keeps target history in the slot that the interpolation treats as playback history. The movement limit survives only the first step of a stationary transition.
+The smoother stores the wrong history. It needs the last position it emitted, not the target it was chasing. By saving target history in the playback-history slot, the implementation defeats its own movement limit after the first step of a stationary transition. Keep the returned result and store target history separately if it is needed. This is a bookkeeping bug in the smoothing mechanism, not a matter of taste in interpolation.
 
 ## Mouth animation
 
@@ -67,7 +67,7 @@ The consumer is `AnimatedMouth.ProcessMicData`. Its curve, peak limiter, and tal
 
 This is a presentation measurement defect, not evidence that the transmitted audio itself is corrupted. The samples are still passed through the audio system. What loses information is the number used to animate the face.
 
-An absolute peak or a windowed energy measurement would express the intended loudness proxy without favoring one polarity. The noise threshold should then be applied to that nonnegative measure. The choice between peak and energy would remain an artistic decision, but the measurement would have a defined relationship to amplitude. Squaring the largest signed value after selection does not provide that relationship.
+The mouth-level measurement is badly defined. Selecting the largest signed sample and then squaring it favors one polarity instead of measuring amplitude consistently. Use an absolute peak or windowed energy, then apply the threshold to that nonnegative measure. Peak versus energy is an artistic choice; letting waveform polarity distort the loudness proxy is a measurement error.
 
 ## Reading and changing this code
 

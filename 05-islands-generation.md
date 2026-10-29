@@ -31,7 +31,7 @@ The loader knows what went wrong, then loses that information at the next bounda
 
 `MapBundleData.Load` has a related contract problem: when loading is already in progress, a second call returns success immediately. That means success can mean either loaded or merely already being loaded. The current loading-screen consumer compensates by separately polling the flag, but the method itself does not provide a reliable completion contract to another caller.
 
-The service should retain the in-flight task and give every caller the same eventual result. Scene loading should require a positive readiness result, with missing-range and load-failure outcomes handled explicitly. This would preserve the distinction between requesting work, finishing work, and producing a usable bundle. Logging the error inside `Load` is not a substitute for returning that distinction to the operation that depends on it.
+The loading contract is broken: callers are expected to assemble readiness from a return value that can mean different things and a separate loading flag. `MapBundleData.Load` should expose the same in-flight operation and eventual result to every caller. `LoadingScreenHandler` should proceed only on a usable bundle. Logging a failure and then letting the dependent operation continue is not error handling; it is moving the failure somewhere less informative.
 
 ## The daily countdown
 
@@ -45,7 +45,7 @@ There is an in-flight guard: the getter checks `QueryingGameTimeStatus`, and `Cl
 
 A menu timer determines retry cadence for a service that also influences content selection and bundle preparation. Adding another display consumer or calling `ToString`, which also reads `SecondsLeft`, can initiate the same service work. A method that appears to inspect a value can cause a request and later content-loading activity.
 
-Refresh should belong to `NextLevelService`, with an explicit in-flight operation, a next-attempt time, and a policy for stale data. The countdown accessor should calculate a display value. Separating these responsibilities would allow the UI to refresh frequently without implicitly controlling network retry behavior, and would make failed-refresh tests independent of whether a menu happens to be visible.
+Putting refresh and retry behavior behind a countdown read is bad API design. `NextLevelService` should own the request, its in-flight state, retry timing, and stale-data policy. A label should ask for a number. Instead, adding a display consumer can change service behavior, and testing recovery requires accounting for which UI happens to read the property. A getter that launches this work hides a consequential side effect behind an innocent-looking read.
 
 ## Generation order and placement
 
@@ -63,7 +63,7 @@ The cost is coupled reproducibility. Changing how many random choices an early s
 
 `LevelGeneration` adds an asynchronous execution path through `PropGrouper`. Because generation can yield between portions of work while using shared state, other random consumers are not isolated by the generation API. The contract provides no private stream that belongs exclusively to this generation run.
 
-Independent random generators, derived from a root seed and stable stage identifiers, would narrow the effect of a local change. Each stage could then reproduce its own decisions without depending on how many random draws an unrelated earlier step happened to make. Spatial dependencies would still need to be preserved; separating random streams does not remove the fact that proximity passes consume prior placement. It removes an extra dependency that makes diagnosing changed output harder.
+The shared random stream creates unnecessary coupling between generation stages. Give each stage a generator derived from the root seed and a stable identifier, and changing its random draw count stops perturbing unrelated stages. Spatial ordering still matters; nobody needs to pretend otherwise. What is avoidable is making reproducibility depend on every earlier consumer's random bookkeeping as well. The current design makes local generation changes more expensive to diagnose than they need to be.
 
 The prop layer provides more than a random prefab list. `PropSpawner` derives from `LevelGenStep` and exposes placement modifiers, constraints, post-placement constraints, and post-spawn behaviors. `PropGrouper.DoValidation` collects results from child `IValidatable` implementations and retains failed or unknown results. Execution ordering and validation are separate concerns: finishing a step does not itself establish that the generated content passed every applicable check.
 
@@ -73,7 +73,7 @@ This produces a specific mismatch between configuration and placement. With down
 
 The consumer, `SpawnObject`, accepts the supplied position and normal, creates the object, and records it among the stage's output. Later proximity passes can then consult that output. A missed grounding constraint can affect both the individual object's placement and subsequent stages that treat it as an established spatial reference.
 
-The stage should distinguish placement modes before evaluating candidates. If a mode requires a supporting surface, a missed probe should produce a failed candidate with a recorded reason. If free-space placement is intended, it should be an explicit mode rather than the accidental continuation of a failed surface query. This also gives validation something useful to count: rejected candidates and the constraints that rejected them.
+A missed supporting-surface probe should reject a surface-dependent candidate. Continuing as though the candidate were usable is a failed validation boundary. If free-space placement is wanted, make it an explicit mode rather than the accidental outcome of a failed query. Otherwise the placement stage cannot clearly distinguish intentional output from output produced after one of its prerequisites failed.
 
 ## Biome discovery
 

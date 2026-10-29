@@ -31,7 +31,7 @@ This is a partial abstraction with a concrete maintenance cost. A change to sess
 
 The issue is not the mere presence of a third-party library. Direct dependencies can be an intentional choice. The problem is that the code offers a session boundary whose scope is narrower than its name suggests, while host and membership checks can come from either the interface or the backend. A reviewer must know which side of that boundary each subsystem actually uses.
 
-A clearer design would choose and enforce the boundary. Connection intent and room lifecycle could go entirely through the session layer, while a separate replication layer owns object identity and updates. Alternatively, the interface could be explicitly limited to the small set of services it really wraps. Either approach would reduce the work of determining whether a change belongs in an adapter, a controller, or a gameplay component. This is an architectural maintenance finding, not a claim that the current backend is incapable of supporting the game.
+This abstraction stops short of the code that would make it useful. Either put connection intent and room lifecycle through the session boundary and give replication its own owner, or admit that the interface wraps only a small set of services. The current middle ground leaves callers choosing between the adapter and Photon directly. It complicates substitution and isolated tests without actually containing transport dependencies. The backend can support the game; the wrapper is still an incomplete architectural boundary.
 
 ## Ownership and movement
 
@@ -47,7 +47,7 @@ The consumer matters because the target is a simulated ragdoll. New arrivals alt
 
 The fixed correction fraction also makes convergence depend on physics-step count. It is not converted from an explicit response time using the current timestep. A physics-frequency change would therefore change how much correction occurs over the same elapsed second. The existing large-error and vertical rules further limit any claim that this is simple linear interpolation of remote movement.
 
-A clearer model would separate remote presentation from physical correction. A bounded sample history could define the presentation target at a chosen delayed time; a timestep-aware correction controller could then move the physical body toward that target. Teleports and carrying would remain explicit transitions. This would make the smoothing policy testable in terms of sample age, target time, and correction error instead of only visual tuning of per-step fractions.
+The correction code lacks a clear temporal model. A bounded sample history should define a target at an explicit delayed time, and a timestep-aware controller should correct the physical body toward it. Teleports and carrying need their own transitions. Instead, receipt state and per-step fractions do too much of the work of defining smoothness. That leaves sample age and convergence harder to reason about, and a physics-frequency change can alter correction behavior over the same elapsed second.
 
 ## Items and ropes
 
@@ -59,7 +59,7 @@ The consequence is a hidden lifetime assumption in the item-specific component: 
 
 This matters to maintenance even before introducing a new runtime setting. A timing change must be reviewed against component creation order, not just against the place where the rate is assigned. A test that creates the syncer before applying configuration exercises a different case from a test that applies configuration first.
 
-The better contract is explicit: either timing is immutable and established before these components initialize, or rate changes notify every cached consumer. Recomputing a few inexpensive derived values at the update boundary is another option. The implementation should not require a reader to infer immutability from the absence of a refresh method.
+The timing configuration has an undocumented lifetime contract. Either establish it as immutable before initialization, notify every cached consumer when it changes, or recompute the cheap derived values. `ItemPhysicsSyncer` and the general syncer should not silently disagree about when configuration takes effect. Having to infer immutability from a missing refresh path is a design defect, not documentation.
 
 Ropes use another policy. `RopeSyncer.ShouldSendData` considers whether there are rope segments, whether characters are nearby, and how long the climbable rope has existed. Older ropes reduce their update frequency. Received rope state is handed to `Rope.SetSyncData`, rather than being treated as one ordinary rigidbody transform.
 
@@ -79,7 +79,7 @@ The resulting comparison is inconsistent. The aggregate and per-type entries are
 
 Timing introduces another measurement error. `NetworkStats.Update` accumulates frame delta until its sampling threshold, then subtracts one second and reports the raw counter difference. It does not divide the count by the actual elapsed sampling interval. After a long frame, the value displayed as a per-second rate can cover a longer interval; subsequent updates can then report shorter intervals while the timer catches up.
 
-These are diagnostic defects rather than gameplay replication defects, but they directly affect investigation of replication cost. A bandwidth change can be misread when units differ or the observation window changes. The fix is to record the actual sampling duration, normalize every rate against that duration, and label bytes or bits consistently. Per-type payload accounting should be identified as such instead of being presented as a decomposition of the entire peer total.
+The network diagnostics are unreliable as a comparison tool when their units and sampling windows disagree. These defects do not prove broken replication; they make investigating replication cost harder. Record the actual interval, normalize rates against it, and label bytes and bits consistently. Per-type payload counts also need to be identified as payload counts, not passed off as a breakdown of the entire peer total. A performance display that needs this much interpretation is failing at its job.
 
 ## Reading and changing this code
 

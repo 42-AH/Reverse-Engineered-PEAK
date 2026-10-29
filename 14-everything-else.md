@@ -28,7 +28,7 @@ Volume and pitch have separate properties. This path uses the volume property tw
 
 The pooled implementation in `SFX_Player.IPlaySFX` assigns volume and pitch separately, so the same sound definition has different setting semantics depending on which playback path receives it. A change to the sound's pitch settings can change dedicated-source loudness instead, while its actual pitch retains the source's existing value.
 
-Both paths should use the same source-configuration operation. Correcting the assignment would fix this defect; centralizing the common settings would also remove the duplicated implementation that allowed the paths to diverge. The audible magnitude still depends on the authored settings and mixer, but the property mismatch is direct.
+`SFX_Instance.PlayFromSource` has a simple assignment bug, made easier to miss by duplicating configuration already implemented correctly in pooled playback. Fix the pitch assignment and share the common source setup. The current path discards authored loudness and never assigns the requested pitch. No elaborate audio theory is needed here: two distinct properties exist, and this method writes to the wrong one.
 
 The pool then times playback using a pitch other than the one it actually chose.
 
@@ -38,7 +38,7 @@ For a nonlooping clip whose assigned pitch is below the base pitch, the timer re
 
 `GetAvailibleSource` selects sources using `isPlaying`, and `OnStopped` updates the shared count and active-handle list. Those are the consumers that make the timing error matter beyond the clip itself. A retained silent source still occupies the pool's logical active state; an early stop truncates the slower playback before making the source available again.
 
-The scheduling should follow the actual assigned pitch or the source's playback completion, with looping sounds handled explicitly. If game time and audio time need different pause behavior, that policy must also be deliberate. The current coroutine introduces a separate clock without keeping its inputs aligned with the source.
+The pool uses one pitch to play the clip and another to decide when playback is finished. That is incorrect lifetime accounting. Follow the assigned pitch or actual playback completion, with explicit handling for loops and pause policy. The independent timer can truncate slower playback or keep an already silent source occupied. A second clock is only useful if it describes the same sound.
 
 ## Reading and changing this code
 
